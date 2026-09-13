@@ -1,5 +1,5 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Response
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Response, Request
 from typing import Optional
 
 from database import db
@@ -242,11 +242,30 @@ async def ai_ask(body: AiAskRequest, user: dict = Depends(get_current_user)):
 
 
 # ---------- CSV ----------
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
+MAX_IMPORT_ROWS = 5000
+
+
 @api_router.post("/csv/upload")
-async def csv_upload(file: UploadFile = File(...), profile_id: str = Form(...),
+async def csv_upload(request: Request, file: UploadFile = File(...), profile_id: str = Form(...),
                      user: dict = Depends(get_current_user)):
+    # CSRF hardening: multipart is a CORS "simple" request (no preflight), so require a
+    # custom header that only same-origin JS (our frontend) can set.
+    if request.headers.get("x-requested-with") != "XobaMetrics":
+        raise HTTPException(status_code=403, detail="Invalid request origin")
+    if not (file.filename or "").lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only .csv files are accepted")
+    # Reject oversized bodies before buffering them into memory.
+    try:
+        declared = int(request.headers.get("content-length", 0))
+    except ValueError:
+        declared = 0
+    if declared > MAX_UPLOAD_BYTES + 4096:
+        raise HTTPException(status_code=413, detail="File too large (max 5 MB)")
     await _owned_profile(profile_id, user)
     raw = await file.read()
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File too large (max 5 MB)")
     try:
         path = f"{storage.APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.csv"
         storage.put_object(path, raw, "text/csv")
@@ -271,6 +290,8 @@ async def csv_upload(file: UploadFile = File(...), profile_id: str = Form(...),
 @api_router.post("/csv/commit")
 async def csv_commit(body: CsvCommitRequest, user: dict = Depends(get_current_user)):
     prof = await _owned_profile(body.profile_id, user)
+    if len(body.rows) > MAX_IMPORT_ROWS:
+        raise HTTPException(status_code=413, detail=f"Too many rows (max {MAX_IMPORT_ROWS})")
     norm = csv_import.normalize_rows(body.rows, body.mapping)
     if not norm:
         raise HTTPException(status_code=400, detail="No valid rows found after normalization")
@@ -355,7 +376,7 @@ async def create_report(body: ReportCreate, user: dict = Depends(get_current_use
         "profile_id": body.profile_id,
         "owner_id": user["user_id"],
         "title": body.title,
-        "share_id": uuid.uuid4().hex[:10],
+        "share_id": uuid.uuid4().hex,
         "totals": overview_data["totals"],
         "platform_breakdown": overview_data["platform_breakdown"],
         "releases": overview_data["releases"],
@@ -380,8 +401,10 @@ async def get_shared_report(share_id: str):
     report = await db.reports.find_one({"share_id": share_id}, {"_id": 0})
     if not report:
         raise HTTPException(status_code=404, detail="Shared report not found")
-    report.pop("owner_id", None)
-    return {"report": report}
+    public = {k: report.get(k) for k in
+              ["id", "title", "share_id", "totals", "platform_breakdown",
+               "releases", "summary", "recommendations", "created_at"]}
+    return {"report": public}
 
 
 # ---------- Demo seeding ----------

@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
 from database import db, client
-from auth import auth_router, hash_password, verify_password
+from auth import auth_router, hash_password
 from routes import api_router
 from models import new_id, now_iso
 import storage
@@ -26,8 +26,9 @@ _frontend = os.environ.get("FRONTEND_URL", "").strip()
 _origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
 if _frontend and _frontend not in _origins:
     _origins.append(_frontend)
+# Never fall back to "*" with credentials enabled (browsers reject it and it is unsafe).
 if not _origins:
-    _origins = ["*"]
+    logger.warning("No CORS origins configured; cross-origin browser requests will be blocked")
 
 app.add_middleware(
     CORSMiddleware,
@@ -73,9 +74,12 @@ async def shutdown():
 
 async def seed_admin():
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@xobametrics.com").lower()
-    admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
+    admin_password = os.environ.get("ADMIN_PASSWORD")
     existing = await db.users.find_one({"email": admin_email}, {"_id": 0})
     if existing is None:
+        if not admin_password:
+            logger.warning("ADMIN_PASSWORD not set; skipping admin seed")
+            return
         user_id = new_id("user")
         await db.users.insert_one({
             "user_id": user_id, "email": admin_email, "name": "Xoba Admin",
@@ -83,10 +87,8 @@ async def seed_admin():
             "auth_provider": "password", "beta_approved": True, "created_at": now_iso(),
         })
     else:
+        # Do NOT reset an existing admin's password on every boot.
         user_id = existing["user_id"]
-        if not verify_password(admin_password, existing.get("password_hash", "")):
-            await db.users.update_one({"user_id": user_id},
-                                      {"$set": {"password_hash": hash_password(admin_password)}})
 
     ws = await db.workspaces.find_one({"owner_id": user_id}, {"_id": 0})
     if not ws:
