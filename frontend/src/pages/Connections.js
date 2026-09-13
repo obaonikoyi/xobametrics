@@ -52,13 +52,23 @@ export default function Connections() {
     finally { setBusy(""); }
   };
 
+  const sync = async (id, platform) => {
+    setBusy(platform);
+    try {
+      const { data } = await api.post(`/connections/${id}/sync`);
+      toast.success(data.snapshots_created > 0 ? `Synced — ${data.snapshots_created} new snapshots.` : "Up to date — already synced today.");
+      load();
+    } catch { toast.error("Sync failed."); }
+    finally { setBusy(""); }
+  };
+
   const byPlatform = Object.fromEntries(conns.map((c) => [c.platform, c]));
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">Platform connections</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Snapshots sync on a schedule — we never live-call platform APIs on page load.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Snapshots sync automatically every day at 04:00 UTC — we never live-call platform APIs on page load. Use “Refresh sync” to pull now.</p>
       </div>
 
       {loading ? (
@@ -81,12 +91,15 @@ export default function Connections() {
                 <h3 className="mt-3 font-display text-lg font-semibold">{PLATFORMS[platform]?.label}</h3>
                 <p className="mt-1 flex-1 text-xs text-muted-foreground">{desc}</p>
                 {conn?.account_name && <p className="mt-2 text-xs font-medium">{conn.account_name}</p>}
+                {conn?.status === "connected" && conn?.last_synced_at && (
+                  <p className="mt-1 text-[11px] text-muted-foreground" data-testid={`last-synced-${platform}`}>Last synced {String(conn.last_synced_at).slice(0, 16).replace("T", " ")} UTC</p>
+                )}
 
                 <div className="mt-4">
                   {platform === "csv" ? (
                     <CsvUploadDialog profileId={activeProfile.id} onImported={load} trigger={<Button variant="outline" className="w-full gap-2"><Upload className="h-4 w-4" /> Upload CSV</Button>} />
                   ) : status === "connected" ? (
-                    <Button variant="outline" className="w-full gap-2" disabled={busy === platform} onClick={() => reconnect(conn.id, platform)} data-testid={`refresh-${platform}`}>
+                    <Button variant="outline" className="w-full gap-2" disabled={busy === platform} onClick={() => sync(conn.id, platform)} data-testid={`refresh-${platform}`}>
                       <RefreshCw className={`h-4 w-4 ${busy === platform ? "animate-spin" : ""}`} /> Refresh sync
                     </Button>
                   ) : status === "needs_reconnect" ? (

@@ -9,9 +9,13 @@ from routes import api_router
 from models import new_id, now_iso
 import storage
 import seed as seed_mod
+import sync as sync_mod
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("xobametrics")
+
+scheduler = AsyncIOScheduler()
 
 app = FastAPI(title="XobaMetrics API")
 
@@ -52,6 +56,20 @@ async def startup():
 
     await seed_admin()
 
+    # Scheduled platform-sync + snapshot worker (daily). Never live-calls APIs on page load.
+    if not scheduler.running:
+        scheduler.add_job(sync_mod.run_daily_sync, "cron", hour=4, minute=0,
+                          id="daily_sync", replace_existing=True, misfire_grace_time=3600)
+        scheduler.start()
+        logger.info("Daily snapshot sync scheduled (04:00 UTC)")
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
+    client.close()
+
 
 async def seed_admin():
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@xobametrics.com").lower()
@@ -85,8 +103,3 @@ async def seed_admin():
         await seed_mod.seed_demo(user_id, ws["id"], prof["id"])
     except Exception as e:
         logger.error(f"Demo seed failed: {e}")
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    client.close()

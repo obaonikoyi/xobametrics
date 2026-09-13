@@ -14,6 +14,7 @@ import ai
 import csv_import
 import storage
 import seed as seed_mod
+import sync as sync_mod
 
 api_router = APIRouter(prefix="/api")
 
@@ -116,6 +117,23 @@ async def reconnect(connection_id: str, user: dict = Depends(get_current_user)):
     conn["status"] = "connected"
     conn["last_synced_at"] = now_iso()
     return {"connection": conn}
+
+
+@api_router.post("/connections/{connection_id}/sync")
+async def sync_one_connection(connection_id: str, user: dict = Depends(get_current_user)):
+    conn = await db.platform_connections.find_one({"id": connection_id, "owner_id": user["user_id"]}, {"_id": 0})
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    if conn.get("status") != "connected":
+        raise HTTPException(status_code=400, detail="Connect this platform before syncing")
+    created = await sync_mod.sync_connection(conn)
+    return {"snapshots_created": created, "synced_at": now_iso()}
+
+
+@api_router.post("/sync/run")
+async def sync_run(profile_id: str, user: dict = Depends(get_current_user)):
+    await _owned_profile(profile_id, user)
+    return await sync_mod.sync_profile(profile_id)
 
 
 # ---------- Releases & Content ----------
