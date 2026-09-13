@@ -1,0 +1,170 @@
+{
+  "project_name": "XobaMetrics",
+  "app_type": "dashboard",
+  "archetype": "THE PERFORMANCE PRO / AUDIO CREATOR DATA COMMAND",
+  "target_audience": "Solo music creators, independent artists, and music label managers running multi-artist rosters.",
+  "brand_identity": {
+    "vibe": "Audio-studio precision meets modern high-density analytics. Precision-engineered, tactical, trustworthy, and artist-first.",
+    "signature_feature": "Release Race (Day-0-aligned trajectory comparison of releases across platforms)",
+    "core_workflow": "Connect → Import → Snapshot → Analyse → Compare → Ask → Report",
+    "theme_strategy": "Dual Mode (Light & Dark theme with instant toggle). Defaulting to Dark Mode for studio immersion, with high-contrast crisp Light Mode for executive reporting."
+  },
+  "colors": {
+    "light": {
+      "background": "#F8FAFC",
+      "surface": "#FFFFFF",
+      "surface_secondary": "#F1F5F9",
+      "border": "#E2E8F0",
+      "border_strong": "#CBD5E1",
+      "text_primary": "#0F172A",
+      "text_secondary": "#475569",
+      "text_muted": "#64748B",
+      "primary": "#2563EB",
+      "primary_hover": "#1D4ED8",
+      "primary_foreground": "#FFFFFF",
+      "accent_cyan": "#0284C7",
+      "accent_emerald": "#059669",
+      "accent_amber": "#D97706",
+      "accent_rose": "#E11D48",
+      "accent_purple": "#7C3AED"
+    },
+    "dark": {
+      "background": "#090D16",
+      "surface": "#111827",
+      "surface_glass": "rgba(17, 24, 39, 0.75)",
+      "surface_secondary": "#1E293B",
+      "border": "rgba(255, 255, 255, 0.08)",
+      "border_strong": "rgba(255, 255, 255, 0.16)",
+      "text_primary": "#F8FAFC",
+      "text_secondary": "#94A3B8",
+      "text_muted": "#64748B",
+      "primary": "#3B82F6",
+      "primary_hover": "#60A5FA",
+      "primary_foreground": "#FFFFFF",
+      "accent_cyan": "#38BDF8",
+      "accent_emerald": "#34D399",
+      "accent_amber": "#FBBF24",
+      "accent_rose": "#F43F5E",
+      "accent_purple": "#A78BFA"
+    },
+    "release_race_chart": {
+      "current_release": "#3B82F6",
+      "previous_release": "#34D399",
+      "top_hit_benchmark": "#FBBF24",
+      "industry_benchmark": "#A78BFA",
+      "grid_line": "rgba(148, 163, 184, 0.1)"
+    },
+    "platform_badge_colors": {
+      "spotify": "#1DB954",
+      "youtube": "#FF0000",
+      "apple_music": "#FA2D48",
+      "tiktok": "#00F2FE",
+      "instagram": "#E1306C",
+      "csv": "#3B82F6"
+    }
+  },
+  "typography": {
+    "font_family_heading": "Outfit, system-ui, sans-serif",
+    "font_family_body": "Inter, -apple-system, BlinkMacSystemFont, sans-serif",
+    "font_family_mono": "JetBrains Mono, Source Code Pro, monospace",
+    "weights": {
+      "display": "800",
+      "heading": "700",
+      "subheading": "600",
+      "body": "400",
+      "numeric_highlight": "700"
+    },
+    "scale": {
+      "h1": "text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight",
+      "h2": "text-2xl sm:text-3xl font-bold tracking-tight",
+      "h3": "text-xl sm:text-2xl font-semibold tracking-tight",
+      "h4": "text-lg sm:text-xl font-semibold",
+      "body_large": "text-base font-normal leading-relaxed",
+      "body_regular": "text-sm font-normal leading-normal",
+      "body_small": "text-xs font-medium text-slate-500 dark:text-slate-400",
+      "label_caps": "text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400"
+    }
+  },
+  "layout_and_spacing": {
+    "grid_system": "High Density Grid (Mode B for Dashboards)",
+    "container_padding": "px-4 sm:px-6 lg:px-8 py-6",
+    "card_padding": "p-5 sm:p-6",
+    "gap_scale": {
+      "tight": "gap-3",
+      "medium": "gap-4 sm:gap-6",
+      "large": "gap-8"
+    },
+    "border_radius": {
+      "card": "rounded-xl",
+      "button": "rounded-lg",
+      "badge": "rounded-full",
+      "input": "rounded-lg"
+    }
+  },
+  "visual_enhancers": {
+    "glassmorphism": "backdrop-blur-md bg-white/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800/80 shadow-sm",
+    "card_hover": "transition-all duration-200 hover:border-blue-500/40 hover:shadow-md dark:hover:shadow-blue-900/10",
+    "pulse_indicator": "relative flex h-2.5 w-2.5 rounded-full bg-emerald-500",
+    "stale_badge": "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20",
+    "reconnect_badge": "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20"
+  },
+  "key_components_guidelines": {
+    "navigation_header": {
+      "description": "Sticky top bar containing logo, Workspace/Profile switcher dropdown, search bar, last-synced status timer, theme toggle, and private beta badge.",
+      "sticky": true,
+      "z_index": "z-50",
+      "background": "backdrop-blur-xl bg-white/90 dark:bg-[#090D16]/90 border-b border-slate-200 dark:border-slate-800"
+    },
+    "workspace_switcher": {
+      "description": "Dropdown selector for managers to switch between individual artists (e.g., 'Luna Eclipse', 'Aether Pulse Studio') or combined Label Workspace view.",
+      "badge": "Manager Mode"
+    },
+    "release_race_signature_chart": {
+      "description": "Day-0 normalized timeline comparison chart built with Recharts LineChart. Aligns multiple releases from their respective Day 0 launch date up to Day 90. Features toggles for metrics (Streams, Saves, Playlist Reach, TikTok Creation count) and normalization modes.",
+      "interactivity": "Hover sync, curve smoothing, day range filter buttons (Day 7, 14, 30, 90, All)."
+    },
+    "ai_analyst_qa_panel": {
+      "description": "Grounding AI Chat component ('Ask Xoba AI'). Prompts users with suggested questions grounded in backend metrics ('Why did Spotify streams spike on Day 14?', 'Compare YouTube retention rate between Release A and B'). Displays confidence tag, data source citations, and chart snapshot embeds.",
+      "layout": "Right drawer or expandable panel with quick prompt chips."
+    },
+    "platform_connections": {
+      "description": "Cards showing connection state for Spotify for Artists, YouTube Analytics, Apple Music for Artists, TikTok, Instagram, and CSV Sync. Features status indicators: 'Connected', 'Syncing', 'Needs Reconnect', 'Needs Auth'.",
+      "actions": "Connect OAuth, Trigger Manual Refresh, Manage CSV Upload."
+    },
+    "csv_upload_flow": {
+      "description": "Interactive drag-and-drop CSV importer with field mapping step (Song Title, ISRC/UPC, Date, Streams, Revenue, Country) and preview table before snapshot commit."
+    },
+    "reports_exporter": {
+      "description": "Export modal allowing PNG snapshot, PDF deck generation, or password-protected public share link creation."
+    }
+  },
+  "image_urls": {
+    "studio_bg": "https://images.unsplash.com/photo-1632582204758-5ac65783517a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzZ8MHwxfHNlYXJjaHwyfHxtdXNpYyUyMHN0dWRpbyUyMHByb2R1Y2VyJTIwdmlueWwlMjBhdWRpbyUyMGFuYWx5dGljc3xlbnwwfHx8fDE3ODkyOTE5NDR8MA&ixlib=rb-4.1.0&q=85",
+    "artist_avatars": [
+      {
+        "name": "Alex Mercer (Producer)",
+        "url": "https://images.unsplash.com/photo-1762291100224-d788ad57c9cd?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1OTN8MHwxfHNlYXJjaHwzfHxtdXNpY2lhbiUyMGFydGlzdCUyMHBvcnRyYWl0JTIwc3R1ZGlvJTIwaGVhZHBob25lc3xlbnwwfHx8fDE3ODkyOTE5NTF8MA&ixlib=rb-4.1.0&q=85"
+      },
+      {
+        "name": "KAIROS (Synthwave)",
+        "url": "https://images.unsplash.com/photo-1762288564479-e86932d64ec2?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1OTN8MHwxfHNlYXJjaHw0fHxtdXNpY2lhbiUyMGFydGlzdCUyMHBvcnRyYWl0JTIwc3R1ZGlvJTIwaGVhZHBob25lc3xlbnwwfHx8fDE3ODkyOTE5NTF8MA&ixlib=rb-4.1.0&q=85"
+      },
+      {
+        "name": "Marcus Vance (Indie R&B)",
+        "url": "https://images.unsplash.com/photo-1626021855512-da7f79ed0b18?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1OTN8MHwxfHNlYXJjaHwxfHxtdXNpY2lhbiUyMGFydGlzdCUyMHBvcnRyYWl0JTIwc3R1ZGlvJTIwaGVhZHBob25lc3xlbnwwfHx8fDE3ODkyOTE5NTF8MA&ixlib=rb-4.1.0&q=85"
+      }
+    ],
+    "mixing_console": "https://images.unsplash.com/photo-1618609377864-68609b857e90?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzZ8MHwxfHNlYXJjaHwzfHxtdXNpY2lhbiUyMGFydGlzdCUyMHBvcnRyYWl0JTIwc3R1ZGlvJTIwaGVhZHBob25lc3xlbnwwfHx8fDE3ODkyOTE5NDR8MA&ixlib=rb-4.1.0&q=85"
+  },
+  "testing_requirements": {
+    "mandatory_attribute": "data-testid",
+    "naming_convention": "kebab-case role-based attributes (e.g. data-testid=\"release-race-chart\", data-testid=\"workspace-switcher-trigger\", data-testid=\"platform-card-spotify\", data-testid=\"ai-chat-input\", data-testid=\"theme-toggle-button\")"
+  },
+  "instructions_to_main_agent": [
+    "Implement React components in plain JavaScript/JSX files (.js/.jsx) as requested by project environment rules.",
+    "Ensure both Light and Dark themes work seamlessly using Tailwind 'dark' class toggling stored in state/localStorage.",
+    "Make the Release Race chart prominent and interactive using Recharts with Day-0 alignment toggle.",
+    "Always provide data-testid attributes on key interactive components for automated verification.",
+    "Never hide essential header or workspace controls behind responsive menus on desktop viewports."
+  ]
+}
