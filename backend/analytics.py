@@ -5,13 +5,31 @@ from database import db
 METRIC_KEYS = ["views", "plays", "likes", "comments", "shares", "reach", "engagement", "followers"]
 
 PLATFORM_META = {
+    # Direct API (real OAuth, phased)
     "youtube": {"label": "YouTube", "color": "#FF0000", "primary": "views"},
     "soundcloud": {"label": "SoundCloud", "color": "#FF5500", "primary": "plays"},
-    "tiktok": {"label": "TikTok", "color": "#00F2FE", "primary": "views"},
+    "tiktok": {"label": "TikTok", "color": "#00BCD4", "primary": "views"},
     "instagram": {"label": "Instagram", "color": "#E1306C", "primary": "views"},
     "twitter": {"label": "X / Twitter", "color": "#1D9BF0", "primary": "views"},
+    # Import via export / CSV (no open metrics API or policy-restricted)
+    "spotify": {"label": "Spotify", "color": "#1DB954", "primary": "plays"},
+    "apple_music": {"label": "Apple Music", "color": "#FA243C", "primary": "plays"},
+    "youtube_music": {"label": "YouTube Music", "color": "#FF0000", "primary": "plays"},
+    "amazon_music": {"label": "Amazon Music", "color": "#25D1DA", "primary": "plays"},
+    "pandora": {"label": "Pandora", "color": "#3668FF", "primary": "plays"},
+    "deezer": {"label": "Deezer", "color": "#A238FF", "primary": "plays"},
+    "tidal": {"label": "TIDAL", "color": "#5B7A9A", "primary": "plays"},
+    "iheartradio": {"label": "iHeartRadio", "color": "#C6002B", "primary": "plays"},
+    "qobuz": {"label": "Qobuz", "color": "#0061FF", "primary": "plays"},
+    "bandcamp": {"label": "Bandcamp", "color": "#629AA9", "primary": "plays"},
+    "beatport": {"label": "Beatport", "color": "#00C46A", "primary": "plays"},
+    "audiomack": {"label": "Audiomack", "color": "#FF8800", "primary": "plays"},
+    "boomplay": {"label": "Boomplay", "color": "#E72C30", "primary": "plays"},
     "csv": {"label": "CSV Import", "color": "#3B82F6", "primary": "plays"},
 }
+
+# Platforms whose primary metric is streams/plays (not views). Used by CSV ingest + sync.
+PLAYS_PLATFORMS = {p for p, m in PLATFORM_META.items() if m["primary"] == "plays" and p != "csv"} | {"csv"}
 
 RACE_COLORS = ["#3B82F6", "#34D399", "#FBBF24", "#A78BFA", "#F43F5E", "#38BDF8"]
 

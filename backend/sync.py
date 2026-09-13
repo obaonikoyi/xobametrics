@@ -13,12 +13,10 @@ from datetime import date, timedelta
 
 from database import db
 from models import new_id, now_iso
-from analytics import METRIC_KEYS
+from analytics import METRIC_KEYS, PLAYS_PLATFORMS
 
 logger = logging.getLogger("xobametrics.sync")
 
-# platforms whose primary metric is "plays" rather than "views"
-PLAYS_PLATFORMS = {"soundcloud"}
 # starting values for brand-new content that has no snapshots yet
 SEED_START = {"youtube": 800, "soundcloud": 500, "tiktok": 1500, "instagram": 700, "twitter": 400, "csv": 500}
 

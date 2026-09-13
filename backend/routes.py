@@ -303,7 +303,7 @@ async def csv_commit(body: CsvCommitRequest, user: dict = Depends(get_current_us
     }
     await db.content_items.insert_one(content)
     rel_date = _date.fromisoformat(body.release_date[:10])
-    uses_plays = body.platform == "soundcloud"
+    uses_plays = body.platform in analytics.PLAYS_PLATFORMS
     snap_docs = []
     for rec in norm:
         try:

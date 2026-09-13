@@ -11,20 +11,27 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { UploadCloud, FileSpreadsheet, ArrowRight } from "lucide-react";
+import { PLATFORMS as REGISTRY } from "@/components/common";
 
 const CANONICAL = ["date", "plays", "views", "likes", "comments", "shares", "followers"];
-const PLATFORMS = [["soundcloud", "SoundCloud"], ["youtube", "YouTube"], ["tiktok", "TikTok"], ["instagram", "Instagram"], ["csv", "Other / Generic"]];
+// ordered platform options for the picker (API first, then DSP exports, then generic)
+const PLATFORM_OPTS = [
+  ...["soundcloud", "youtube", "tiktok", "instagram", "twitter"],
+  ...["spotify", "apple_music", "youtube_music", "amazon_music", "pandora", "deezer", "tidal", "iheartradio", "qobuz", "bandcamp", "beatport", "audiomack", "boomplay"],
+  "csv",
+].map((k) => [k, k === "csv" ? "Other / Generic" : (REGISTRY[k]?.label || k)]);
 
-export default function CsvUploadDialog({ profileId, onImported, trigger }) {
+export default function CsvUploadDialog({ profileId, onImported, trigger, defaultPlatform }) {
+  const initialPlatform = defaultPlatform || "soundcloud";
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState(1);
   const [parsed, setParsed] = useState(null);
   const [mapping, setMapping] = useState({});
-  const [meta, setMeta] = useState({ platform: "soundcloud", title: "", date: "", content_type: "track" });
+  const [meta, setMeta] = useState({ platform: initialPlatform, title: "", date: "", content_type: "track" });
   const [busy, setBusy] = useState(false);
   const fileRef = useRef();
 
-  const reset = () => { setStep(1); setParsed(null); setMapping({}); setMeta({ platform: "soundcloud", title: "", date: "", content_type: "track" }); };
+  const reset = () => { setStep(1); setParsed(null); setMapping({}); setMeta({ platform: initialPlatform, title: "", date: "", content_type: "track" }); };
 
   const handleFile = async (file) => {
     if (!file) return;
@@ -105,7 +112,7 @@ export default function CsvUploadDialog({ profileId, onImported, trigger }) {
                 <Label>Platform</Label>
                 <Select value={meta.platform} onValueChange={(v) => setMeta({ ...meta, platform: v })}>
                   <SelectTrigger className="mt-1.5" data-testid="csv-platform-select"><SelectValue /></SelectTrigger>
-                  <SelectContent>{PLATFORMS.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}</SelectContent>
+                  <SelectContent>{PLATFORM_OPTS.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div>
