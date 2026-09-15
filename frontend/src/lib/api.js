@@ -1,15 +1,15 @@
 import axios from "axios";
+import { resolveApiConfig } from "./api-config";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-export const API = `${BACKEND_URL}/api`;
+const backend = resolveApiConfig(process.env.REACT_APP_BACKEND_URL, process.env.NODE_ENV === "production");
+export const API = backend.baseURL;
+export const BACKEND_CONFIG_ERROR = backend.error;
 
-const api = axios.create({ baseURL: API, withCredentials: true });
-
-// Custom header so the backend can distinguish our same-origin JS from cross-site
-// "simple" requests (CSRF hardening, esp. for multipart CSV upload).
+const api = axios.create({ baseURL: API || "/api", withCredentials: true });
 api.defaults.headers.common["X-Requested-With"] = "XobaMetrics";
 
 api.interceptors.request.use((config) => {
+  if (BACKEND_CONFIG_ERROR) throw new Error(BACKEND_CONFIG_ERROR);
   const token = localStorage.getItem("xoba_token");
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;

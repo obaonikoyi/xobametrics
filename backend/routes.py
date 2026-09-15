@@ -71,40 +71,30 @@ async def create_profile(body: ProfileCreate, user: dict = Depends(get_current_u
 
 
 # ---------- Platform Connections ----------
+def _public_connection(conn: dict) -> dict:
+    # No real OAuth adapters exist yet. Do not expose legacy stub statuses as
+    # verified connections, and never serialize future token fields to clients.
+    public = {key: conn.get(key) for key in
+              ("id", "profile_id", "platform", "account_name", "source")}
+    public.update({"status": "needs_auth", "last_synced_at": None,
+                   "integration_state": "not_implemented",
+                   "status_message": sync_mod.INTEGRATION_MESSAGE})
+    return public
+
+
 @api_router.get("/connections")
 async def list_connections(profile_id: str, user: dict = Depends(get_current_user)):
     await _owned_profile(profile_id, user)
     conns = await db.platform_connections.find({"profile_id": profile_id}, {"_id": 0}).to_list(100)
-    return {"connections": conns}
+    return {"connections": [_public_connection(c) for c in conns],
+            "live_integrations_available": False,
+            "message": sync_mod.INTEGRATION_MESSAGE}
 
 
 @api_router.post("/connections")
 async def create_connection(body: ConnectionCreate, user: dict = Depends(get_current_user)):
     await _owned_profile(body.profile_id, user)
-    prof = await db.creator_profiles.find_one({"id": body.profile_id}, {"_id": 0})
-    existing = await db.platform_connections.find_one(
-        {"profile_id": body.profile_id, "platform": body.platform}, {"_id": 0})
-    if existing:
-        await db.platform_connections.update_one(
-            {"id": existing["id"]},
-            {"$set": {"status": "connected", "account_name": body.account_name or existing.get("account_name"),
-                      "last_synced_at": now_iso()}})
-        existing["status"] = "connected"
-        return {"connection": existing}
-    conn = {
-        "id": new_id("conn"),
-        "profile_id": body.profile_id,
-        "workspace_id": prof["workspace_id"],
-        "owner_id": user["user_id"],
-        "platform": body.platform,
-        "status": "connected",
-        "account_name": body.account_name,
-        "source": "oauth",
-        "connected_at": now_iso(),
-        "last_synced_at": now_iso(),
-    }
-    await db.platform_connections.insert_one(conn)
-    return {"connection": _clean(conn)}
+    raise HTTPException(status_code=501, detail=sync_mod.INTEGRATION_MESSAGE)
 
 
 @api_router.post("/connections/{connection_id}/reconnect")
@@ -112,11 +102,7 @@ async def reconnect(connection_id: str, user: dict = Depends(get_current_user)):
     conn = await db.platform_connections.find_one({"id": connection_id, "owner_id": user["user_id"]}, {"_id": 0})
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
-    await db.platform_connections.update_one(
-        {"id": connection_id}, {"$set": {"status": "connected", "last_synced_at": now_iso()}})
-    conn["status"] = "connected"
-    conn["last_synced_at"] = now_iso()
-    return {"connection": conn}
+    raise HTTPException(status_code=501, detail=sync_mod.INTEGRATION_MESSAGE)
 
 
 @api_router.post("/connections/{connection_id}/sync")
@@ -124,16 +110,13 @@ async def sync_one_connection(connection_id: str, user: dict = Depends(get_curre
     conn = await db.platform_connections.find_one({"id": connection_id, "owner_id": user["user_id"]}, {"_id": 0})
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
-    if conn.get("status") != "connected":
-        raise HTTPException(status_code=400, detail="Connect this platform before syncing")
-    created = await sync_mod.sync_connection(conn)
-    return {"snapshots_created": created, "synced_at": now_iso()}
+    raise HTTPException(status_code=501, detail=sync_mod.INTEGRATION_MESSAGE)
 
 
 @api_router.post("/sync/run")
 async def sync_run(profile_id: str, user: dict = Depends(get_current_user)):
     await _owned_profile(profile_id, user)
-    return await sync_mod.sync_profile(profile_id)
+    raise HTTPException(status_code=501, detail=sync_mod.INTEGRATION_MESSAGE)
 
 
 # ---------- Releases & Content ----------
@@ -230,6 +213,10 @@ async def race(profile_id: str, release_ids: str, metric: str = "reach", max_day
 @api_router.post("/ai/insights")
 async def ai_insights(body: AiInsightRequest, user: dict = Depends(get_current_user)):
     await _owned_profile(body.profile_id, user)
+    if body.release_id:
+        release = await _owned_release(body.release_id, user)
+        if release["profile_id"] != body.profile_id:
+            raise HTTPException(status_code=404, detail="Release not found")
     return await ai.generate_insight(body.profile_id, body.release_id)
 
 
@@ -249,13 +236,11 @@ MAX_IMPORT_ROWS = 5000
 @api_router.post("/csv/upload")
 async def csv_upload(request: Request, file: UploadFile = File(...), profile_id: str = Form(...),
                      user: dict = Depends(get_current_user)):
-    # CSRF hardening: multipart is a CORS "simple" request (no preflight), so require a
-    # custom header that only same-origin JS (our frontend) can set.
+    # Require a non-simple header; CORS restricts allowed browser origins.
     if request.headers.get("x-requested-with") != "XobaMetrics":
         raise HTTPException(status_code=403, detail="Invalid request origin")
     if not (file.filename or "").lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only .csv files are accepted")
-    # Reject oversized bodies before buffering them into memory.
     try:
         declared = int(request.headers.get("content-length", 0))
     except ValueError:
@@ -263,16 +248,18 @@ async def csv_upload(request: Request, file: UploadFile = File(...), profile_id:
     if declared > MAX_UPLOAD_BYTES + 4096:
         raise HTTPException(status_code=413, detail="File too large (max 5 MB)")
     await _owned_profile(profile_id, user)
-    raw = await file.read()
+    raw = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(raw) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="File too large (max 5 MB)")
+    headers, rows, suggested = csv_import.parse_csv(raw)
+    if len(rows) > MAX_IMPORT_ROWS:
+        raise HTTPException(status_code=413, detail=f"Too many rows (max {MAX_IMPORT_ROWS})")
+    preview = csv_import.normalize_rows(rows, suggested)
     try:
         path = f"{storage.APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.csv"
         storage.put_object(path, raw, "text/csv")
     except Exception:
         path = None
-    headers, rows, suggested = csv_import.parse_csv(raw)
-    preview = csv_import.normalize_rows(rows, suggested)
     await db.files.insert_one({
         "id": new_id("file"),
         "owner_id": user["user_id"],
@@ -283,7 +270,7 @@ async def csv_upload(request: Request, file: UploadFile = File(...), profile_id:
         "is_deleted": False,
         "created_at": now_iso(),
     })
-    return {"headers": headers, "rows": rows[:50], "suggested_mapping": suggested,
+    return {"headers": headers, "rows": rows, "suggested_mapping": suggested,
             "preview": preview[:30], "row_count": len(rows)}
 
 
