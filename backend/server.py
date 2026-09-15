@@ -1,6 +1,7 @@
 import os
 import logging
-from fastapi import FastAPI
+import asyncio
+from fastapi import FastAPI, HTTPException
 from starlette.middleware.cors import CORSMiddleware
 
 from database import db, client
@@ -14,22 +15,19 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("xobametrics")
-
-scheduler = AsyncIOScheduler()
-
+scheduler = AsyncIOScheduler(timezone="UTC")
 app = FastAPI(title="XobaMetrics API")
-
 app.include_router(auth_router)
 app.include_router(api_router)
 
-_frontend = os.environ.get("FRONTEND_URL", "").strip()
-_origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+_frontend = os.environ.get("FRONTEND_URL", "").strip().rstrip("/")
+_origins = [o.strip().rstrip("/") for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
 if _frontend and _frontend not in _origins:
     _origins.append(_frontend)
-# Never fall back to "*" with credentials enabled (browsers reject it and it is unsafe).
+if "*" in _origins:
+    raise RuntimeError("Explicit CORS origins are required; wildcard is not allowed")
 if not _origins:
     logger.warning("No CORS origins configured; cross-origin browser requests will be blocked")
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
@@ -37,6 +35,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok", "service": "xobametrics-api", "live_integrations_available": False}
+
+
+@app.get("/api/ready")
+async def ready():
+    try:
+        await asyncio.wait_for(db.command("ping"), timeout=3)
+    except Exception:
+        raise HTTPException(status_code=503, detail="Database is not ready")
+    return {"status": "ready"}
 
 
 @app.on_event("startup")
@@ -48,21 +60,18 @@ async def startup():
     await db.releases.create_index("profile_id")
     await db.content_items.create_index("release_id")
     await db.metric_snapshots.create_index("content_item_id")
-
     try:
         storage.init_storage()
         logger.info("Object storage initialized")
-    except Exception as e:
-        logger.error(f"Storage init failed: {e}")
-
+    except Exception:
+        logger.warning("Object storage unavailable; configure it before relying on archived uploads")
     await seed_admin()
-
-    # Scheduled platform-sync + snapshot worker (daily). Never live-calls APIs on page load.
-    if not scheduler.running:
+    # Disabled by default. Real adapters and durable locking are launch gates.
+    if os.environ.get("ENABLE_SCHEDULED_SYNC", "false").lower() == "true" and not scheduler.running:
         scheduler.add_job(sync_mod.run_daily_sync, "cron", hour=4, minute=0,
                           id="daily_sync", replace_existing=True, misfire_grace_time=3600)
         scheduler.start()
-        logger.info("Daily snapshot sync scheduled (04:00 UTC)")
+        logger.info("Sync entry point scheduled (04:00 UTC); unimplemented adapters remain disabled")
 
 
 @app.on_event("shutdown")
@@ -87,21 +96,24 @@ async def seed_admin():
             "auth_provider": "password", "beta_approved": True, "created_at": now_iso(),
         })
     else:
-        # Do NOT reset an existing admin's password on every boot.
         user_id = existing["user_id"]
-
+    demo_enabled = os.environ.get("ENABLE_DEMO_SEED", "false").lower() == "true"
+    display_name = "Luna Eclipse" if demo_enabled else "Xoba Admin"
     ws = await db.workspaces.find_one({"owner_id": user_id}, {"_id": 0})
     if not ws:
-        ws = {"id": new_id("ws"), "owner_id": user_id, "name": "Luna Eclipse",
+        ws = {"id": new_id("ws"), "owner_id": user_id, "name": display_name,
               "type": "solo", "created_at": now_iso()}
         await db.workspaces.insert_one(ws)
     prof = await db.creator_profiles.find_one({"owner_id": user_id}, {"_id": 0})
     if not prof:
         prof = {"id": new_id("prof"), "workspace_id": ws["id"], "owner_id": user_id,
-                "name": "Luna Eclipse", "genre": "Synthwave / Electronic",
+                "name": display_name, "genre": "Synthwave / Electronic" if demo_enabled else None,
                 "avatar": None, "created_at": now_iso()}
         await db.creator_profiles.insert_one(prof)
+    # Existing demo records are not deleted; audit them separately.
+    if not demo_enabled:
+        return
     try:
         await seed_mod.seed_demo(user_id, ws["id"], prof["id"])
-    except Exception as e:
-        logger.error(f"Demo seed failed: {e}")
+    except Exception:
+        logger.warning("Demo seed failed")
