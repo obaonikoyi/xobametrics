@@ -41,8 +41,13 @@ export default function AiPanel() {
     try {
       const { data } = await api.post("/ai/ask", { profile_id: activeProfile.id, question });
       setMessages((m) => [...m, { role: "ai", text: data.answer, grounded: data.grounded }]);
-    } catch {
-      setMessages((m) => [...m, { role: "ai", text: "I couldn't compute that right now. Please try again.", grounded: false }]);
+    } catch (e) {
+      const detail = e?.response?.data?.detail;
+      setMessages((m) => [...m, {
+        role: "ai",
+        text: typeof detail === "string" ? detail : "I couldn't compute that right now. Please try again.",
+        grounded: false,
+      }]);
     } finally {
       setBusy(false);
     }
