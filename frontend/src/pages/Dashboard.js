@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import api, { compactNumber, fullNumber } from "@/lib/api";
 import { useWorkspace } from "@/context/WorkspaceContext";
 import { useAi } from "@/context/AiContext";
-import { StatCard, Freshness, PlatformBadge } from "@/components/common";
+import { StatCard, Freshness } from "@/components/common";
 import CsvUploadDialog from "@/components/CsvUploadDialog";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -23,6 +23,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [insight, setInsight] = useState(null);
   const [insightLoading, setInsightLoading] = useState(false);
+  const [insightError, setInsightError] = useState("");
   const [seeding, setSeeding] = useState(false);
 
   const load = useCallback(async () => {
@@ -39,17 +40,21 @@ export default function Dashboard() {
   const loadInsight = useCallback(async () => {
     if (!activeProfile) return;
     setInsightLoading(true);
+    setInsightError("");
     try {
       const { data } = await api.post("/ai/insights", { profile_id: activeProfile.id });
       setInsight(data);
+    } catch (e) {
+      setInsight(null);
+      setInsightError(e?.response?.data?.detail || "AI insights are temporarily unavailable. Your analytics are still available.");
     } finally {
       setInsightLoading(false);
     }
   }, [activeProfile]);
 
-  useEffect(() => { load(); setInsight(null); }, [load]);
+  useEffect(() => { load(); setInsight(null); setInsightError(""); }, [load]);
   useEffect(() => {
-    if (data && data.release_count > 0 && !insight && !insightLoading) loadInsight();
+    if (data && data.release_count > 0 && !insight && !insightLoading && !insightError) loadInsight();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
@@ -89,7 +94,6 @@ export default function Dashboard() {
         <StatCard testId="stat-releases" label="Releases" value={data.release_count} sub={data.top_release ? `Top: ${data.top_release.title}` : ""} icon={Disc3} accent="#A78BFA" />
       </div>
 
-      {/* AI insight */}
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} data-testid="ai-insight-card"
         className="rounded-xl border border-primary/20 bg-gradient-to-br from-primary/[0.06] to-transparent p-5">
         <div className="flex items-center justify-between">
@@ -101,6 +105,11 @@ export default function Dashboard() {
           </span>
         </div>
         {insightLoading && <div className="mt-3 space-y-2"><Skeleton className="h-4 w-full" /><Skeleton className="h-4 w-4/5" /></div>}
+        {insightError && !insightLoading && (
+          <div className="mt-3 rounded-lg border border-border bg-card/60 p-3 text-sm text-muted-foreground" data-testid="ai-insight-unavailable">
+            {insightError}
+          </div>
+        )}
         {insight && !insightLoading && (
           <>
             <p className="mt-3 text-sm leading-relaxed text-foreground/90">{insight.summary}</p>
@@ -121,7 +130,6 @@ export default function Dashboard() {
       </motion.div>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        {/* Platform breakdown */}
         <div className="rounded-xl border border-border bg-card p-5 lg:col-span-2">
           <h3 className="font-display text-lg font-semibold">Reach by platform</h3>
           <div className="mt-4 h-64">
@@ -138,7 +146,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Top releases */}
         <div className="rounded-xl border border-border bg-card p-5">
           <h3 className="font-display text-lg font-semibold">Top releases</h3>
           <div className="mt-4 space-y-2">
@@ -168,7 +175,7 @@ function EmptyState({ onSeed, seeding, navigate, profileId, onImported }) {
       </div>
       <h1 className="mt-5 font-display text-2xl font-bold sm:text-3xl">Let's bring in your numbers</h1>
       <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-        Connect a platform, upload a CSV, or load a demo workspace to see auto-charts, Release Race and grounded AI insights.
+        Upload a CSV, review planned integrations, or load demo data to see auto-charts, Release Race and grounded AI insights.
       </p>
       <div className="mt-8 grid gap-3 sm:grid-cols-3">
         <button onClick={onSeed} disabled={seeding} data-testid="empty-load-demo" className="rounded-xl border border-primary/30 bg-primary/5 p-5 text-left transition-colors hover:border-primary/60">
@@ -184,8 +191,8 @@ function EmptyState({ onSeed, seeding, navigate, profileId, onImported }) {
           </button>} />
         <button onClick={() => navigate("/connections")} data-testid="empty-connect" className="rounded-xl border border-border bg-card p-5 text-left transition-colors hover:border-primary/40">
           <PlugZap className="h-6 w-6 text-primary" />
-          <div className="mt-3 font-semibold">Connect platform</div>
-          <div className="mt-1 text-xs text-muted-foreground">YouTube, SoundCloud…</div>
+          <div className="mt-3 font-semibold">View integrations</div>
+          <div className="mt-1 text-xs text-muted-foreground">YouTube, SoundCloud and more</div>
         </button>
       </div>
     </div>
