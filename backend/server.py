@@ -7,6 +7,7 @@ from starlette.middleware.cors import CORSMiddleware
 from database import db, client
 from auth import auth_router, hash_password
 from routes import api_router
+from youtube import router as youtube_router
 from models import new_id, now_iso
 import storage
 import seed as seed_mod
@@ -19,6 +20,7 @@ scheduler = AsyncIOScheduler(timezone="UTC")
 app = FastAPI(title="XobaMetrics API")
 app.include_router(auth_router)
 app.include_router(api_router)
+app.include_router(youtube_router)
 
 _frontend = os.environ.get("FRONTEND_URL", "").strip().rstrip("/")
 _origins = [o.strip().rstrip("/") for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
@@ -39,7 +41,7 @@ app.add_middleware(
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "service": "xobametrics-api", "live_integrations_available": False}
+    return {"status": "ok", "service": "xobametrics-api", "live_integrations_available": True}
 
 
 @app.get("/api/ready")
@@ -59,19 +61,22 @@ async def startup():
     await db.creator_profiles.create_index("owner_id")
     await db.releases.create_index("profile_id")
     await db.content_items.create_index("release_id")
+    await db.content_items.create_index([("profile_id", 1), ("platform", 1), ("external_id", 1)])
     await db.metric_snapshots.create_index("content_item_id")
+    await db.metric_snapshots.create_index([("content_item_id", 1), ("date", 1), ("source", 1)])
+    await db.oauth_states.create_index("nonce", unique=True)
     try:
         storage.init_storage()
         logger.info("Object storage initialized")
     except Exception:
         logger.warning("Object storage unavailable; configure it before relying on archived uploads")
     await seed_admin()
-    # Disabled by default. Real adapters and durable locking are launch gates.
+    # Disabled by default until every scheduled adapter has durable locking/retry policy.
     if os.environ.get("ENABLE_SCHEDULED_SYNC", "false").lower() == "true" and not scheduler.running:
         scheduler.add_job(sync_mod.run_daily_sync, "cron", hour=4, minute=0,
                           id="daily_sync", replace_existing=True, misfire_grace_time=3600)
         scheduler.start()
-        logger.info("Sync entry point scheduled (04:00 UTC); unimplemented adapters remain disabled")
+        logger.info("Sync entry point scheduled (04:00 UTC)")
 
 
 @app.on_event("shutdown")
@@ -110,7 +115,6 @@ async def seed_admin():
                 "name": display_name, "genre": "Synthwave / Electronic" if demo_enabled else None,
                 "avatar": None, "created_at": now_iso()}
         await db.creator_profiles.insert_one(prof)
-    # Existing demo records are not deleted; audit them separately.
     if not demo_enabled:
         return
     try:
