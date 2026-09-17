@@ -1,7 +1,11 @@
 import axios from "axios";
 import { resolveApiConfig } from "./api-config";
 
-const backend = resolveApiConfig(process.env.REACT_APP_BACKEND_URL, process.env.NODE_ENV === "production");
+const DEFAULT_PRODUCTION_BACKEND = "https://xobametrics-production.up.railway.app";
+const configuredBackend = process.env.REACT_APP_BACKEND_URL ||
+  (process.env.NODE_ENV === "production" ? DEFAULT_PRODUCTION_BACKEND : "");
+const backend = resolveApiConfig(configuredBackend, process.env.NODE_ENV === "production");
+
 export const API = backend.baseURL;
 export const BACKEND_CONFIG_ERROR = backend.error;
 
