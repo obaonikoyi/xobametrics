@@ -22,8 +22,14 @@ SYSTEM_PROMPT = (
 
 
 def _chat(session_id: str) -> LlmChat:
+    api_key = os.environ.get("EMERGENT_LLM_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="AI insights are not configured yet. Your stored analytics are still available.",
+        )
     return LlmChat(
-        api_key=os.environ["EMERGENT_LLM_KEY"],
+        api_key=api_key,
         session_id=session_id,
         system_message=SYSTEM_PROMPT,
     ).with_model(MODEL_PROVIDER, MODEL_NAME)
@@ -37,8 +43,6 @@ def _fmt(n):
 
 
 async def _build_facts(profile_id: str, release_id=None) -> dict:
-    # Defense in depth: validate scope before reading release metrics, even when
-    # called outside the HTTP route. The caller must own profile_id.
     rel = None
     if release_id:
         rel = await db.releases.find_one({"id": release_id, "profile_id": profile_id}, {"_id": 0})
