@@ -7,7 +7,7 @@ from starlette.middleware.cors import CORSMiddleware
 from database import db, client
 from auth import auth_router, hash_password
 from routes import api_router
-from youtube import router as youtube_router
+from youtube import router as youtube_router, _configured as youtube_configured
 from models import new_id, now_iso
 import storage
 import seed as seed_mod
@@ -41,7 +41,12 @@ app.add_middleware(
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "service": "xobametrics-api", "live_integrations_available": True}
+    return {
+        "status": "ok",
+        "service": "xobametrics-api",
+        "live_integrations_available": youtube_configured(),
+        "youtube_configured": youtube_configured(),
+    }
 
 
 @app.get("/api/ready")
@@ -71,7 +76,6 @@ async def startup():
     except Exception:
         logger.warning("Object storage unavailable; configure it before relying on archived uploads")
     await seed_admin()
-    # Disabled by default until every scheduled adapter has durable locking/retry policy.
     if os.environ.get("ENABLE_SCHEDULED_SYNC", "false").lower() == "true" and not scheduler.running:
         scheduler.add_job(sync_mod.run_daily_sync, "cron", hour=4, minute=0,
                           id="daily_sync", replace_existing=True, misfire_grace_time=3600)
