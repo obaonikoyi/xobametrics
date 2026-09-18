@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 import httpx
 import jwt
 from cryptography.fernet import Fernet, InvalidToken
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 
 from auth import get_current_user
@@ -80,6 +80,27 @@ def _decrypt(value: str | None) -> str | None:
 def _oauth_error_redirect(reason: str) -> RedirectResponse:
     safe = reason[:120].replace(" ", "_")
     return RedirectResponse(f"{_frontend_url()}/connections?youtube=error&reason={safe}")
+
+
+async def _background_history_backfill(profile_id: str, owner_id: str):
+    """Run historical import after OAuth without delaying the Google redirect."""
+    try:
+        from youtube_history import youtube_backfill_history
+        await youtube_backfill_history(profile_id=profile_id, user={"user_id": owner_id})
+        await db.platform_connections.update_one(
+            {"profile_id": profile_id, "owner_id": owner_id, "platform": "youtube"},
+            {"$set": {"history_last_error": None}},
+        )
+    except HTTPException as exc:
+        await db.platform_connections.update_one(
+            {"profile_id": profile_id, "owner_id": owner_id, "platform": "youtube"},
+            {"$set": {"history_last_error": str(exc.detail)[:300]}},
+        )
+    except Exception:
+        await db.platform_connections.update_one(
+            {"profile_id": profile_id, "owner_id": owner_id, "platform": "youtube"},
+            {"$set": {"history_last_error": "Historical Analytics import failed. Retry from Connections."}},
+        )
 
 
 async def _owned_profile(profile_id: str, user_id: str) -> dict:
@@ -440,6 +461,7 @@ async def youtube_connect(profile_id: str = Query(...), user: dict = Depends(get
 
 @router.get("/callback")
 async def youtube_callback(
+    background_tasks: BackgroundTasks,
     code: str | None = None,
     state: str | None = None,
     error: str | None = None,
@@ -540,6 +562,8 @@ async def youtube_callback(
         result = await sync_youtube(profile_id, owner_id)
         imported = result["content_imported"]
         seen = result["videos_seen"]
+        if YOUTUBE_ANALYTICS_SCOPE in granted:
+            background_tasks.add_task(_background_history_backfill, profile_id, owner_id)
         return RedirectResponse(
             f"{_frontend_url()}/connections?youtube=connected&imported={imported}&videos={seen}"
         )
