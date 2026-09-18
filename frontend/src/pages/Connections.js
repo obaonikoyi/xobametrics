@@ -12,6 +12,7 @@ export default function Connections() {
   const { activeProfile } = useWorkspace();
   const [dataByPlatform, setDataByPlatform] = useState({});
   const [youtube, setYoutube] = useState({ configured: false, connection: null });
+  const [youtubeHistory, setYoutubeHistory] = useState({ scope_granted: false, backfilled_at: null, history_points_written: 0 });
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [busy, setBusy] = useState("");
@@ -21,14 +22,16 @@ export default function Connections() {
     setLoading(true);
     setLoadError(false);
     try {
-      const [overview, yt] = await Promise.all([
+      const [overview, yt, history] = await Promise.all([
         api.get(`/analytics/overview?profile_id=${encodeURIComponent(activeProfile.id)}`),
         api.get(`/youtube/status?profile_id=${encodeURIComponent(activeProfile.id)}`),
+        api.get(`/youtube/history-status?profile_id=${encodeURIComponent(activeProfile.id)}`),
       ]);
       const map = {};
       (overview.data.platform_breakdown || []).forEach((p) => { map[p.platform] = p.reach; });
       setDataByPlatform(map);
       setYoutube(yt.data);
+      setYoutubeHistory(history.data);
     } catch {
       setDataByPlatform({});
       setLoadError(true);
@@ -81,6 +84,18 @@ export default function Connections() {
     } finally { setBusy(""); }
   };
 
+  const backfillYoutubeHistory = async () => {
+    if (!activeProfile) return;
+    setBusy("youtube-history");
+    try {
+      const { data } = await api.post(`/youtube/backfill-history?profile_id=${encodeURIComponent(activeProfile.id)}`);
+      toast.success(`YouTube history imported — ${data.videos} videos, ${compactNumber(data.history_points_written)} historical points.`);
+      await load();
+    } catch (e) {
+      toast.error(formatApiErrorDetail(e?.response?.data?.detail || e?.message));
+    } finally { setBusy(""); }
+  };
+
   const disconnectYoutube = async () => {
     if (!activeProfile || !window.confirm("Disconnect YouTube? Existing XobaMetrics history will be kept.")) return;
     setBusy("youtube-disconnect");
@@ -99,6 +114,7 @@ export default function Connections() {
     const needsReconnect = conn?.status === "needs_reconnect";
     const channelStats = conn?.channel_statistics;
     const total = dataByPlatform.youtube;
+    const historyReady = youtubeHistory.scope_granted;
     return (
       <div data-testid="platform-card-youtube" className="flex flex-col rounded-xl border border-border bg-card p-5 transition-all hover:border-primary/40">
         <div className="flex items-start justify-between">
@@ -119,6 +135,12 @@ export default function Connections() {
         )}
         {total != null && <p className="mt-1 text-xs text-muted-foreground">{compactNumber(total)} stored YouTube views across imported content</p>}
         {conn?.last_synced_at && connected && <p className="mt-1 text-[11px] text-muted-foreground">Last synced {String(conn.last_synced_at).slice(0, 16).replace("T", " ")} UTC</p>}
+        {connected && youtubeHistory.backfilled_at && (
+          <p className="mt-1 text-[11px] text-muted-foreground">Historical Analytics imported through {youtubeHistory.history_end_date} · {compactNumber(youtubeHistory.history_points_written)} daily points</p>
+        )}
+        {connected && !historyReady && (
+          <p className="mt-3 text-xs text-amber-500">Reconnect once to add read-only YouTube Analytics permission for historical Day-0/7/30/90 comparisons.</p>
+        )}
         {!youtube.configured && <p className="mt-3 text-xs text-amber-500">Google OAuth credentials still need to be added to the backend.</p>}
         <div className="mt-4 flex gap-2">
           {connected ? (
@@ -130,6 +152,20 @@ export default function Connections() {
             <Button className="w-full gap-2" onClick={connectYoutube} disabled={!youtube.configured || busy !== ""} data-testid="youtube-connect"><PlugZap className="h-4 w-4" /> {needsReconnect ? "Reconnect YouTube" : "Connect YouTube"}</Button>
           )}
         </div>
+        {connected && (
+          <div className="mt-2">
+            {historyReady ? (
+              <Button variant="outline" className="w-full gap-2" onClick={backfillYoutubeHistory} disabled={busy !== ""} data-testid="youtube-history">
+                <RefreshCw className={`h-4 w-4 ${busy === "youtube-history" ? "animate-spin" : ""}`} />
+                {youtubeHistory.backfilled_at ? "Refresh historical analytics" : "Import historical analytics"}
+              </Button>
+            ) : (
+              <Button variant="outline" className="w-full gap-2" onClick={connectYoutube} disabled={busy !== ""} data-testid="youtube-enable-history">
+                <PlugZap className="h-4 w-4" /> Enable historical analytics
+              </Button>
+            )}
+          </div>
+        )}
       </div>
     );
   };
