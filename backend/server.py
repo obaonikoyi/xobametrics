@@ -21,6 +21,7 @@ app = FastAPI(title="XobaMetrics API")
 app.include_router(auth_router)
 app.include_router(api_router)
 app.include_router(youtube_router)
+app.include_router(youtube_history_router)
 
 _frontend = os.environ.get("FRONTEND_URL", "").strip().rstrip("/")
 _origins = [o.strip().rstrip("/") for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
