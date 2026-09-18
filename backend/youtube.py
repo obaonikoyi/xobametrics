@@ -21,7 +21,10 @@ AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 YOUTUBE_API = "https://www.googleapis.com/youtube/v3"
-SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
+YOUTUBE_READ_SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
+YOUTUBE_ANALYTICS_SCOPE = "https://www.googleapis.com/auth/yt-analytics.readonly"
+REQUIRED_SCOPES = {YOUTUBE_READ_SCOPE, YOUTUBE_ANALYTICS_SCOPE}
+SCOPE = " ".join((YOUTUBE_READ_SCOPE, YOUTUBE_ANALYTICS_SCOPE))
 STATE_TYPE = "youtube_oauth_state"
 
 
@@ -488,8 +491,9 @@ async def youtube_callback(
         return _oauth_error_redirect("token_exchange_failed")
     tokens = response.json()
     granted = set((tokens.get("scope") or "").split())
-    if SCOPE not in granted:
-        return _oauth_error_redirect("youtube_read_permission_not_granted")
+    missing_scopes = REQUIRED_SCOPES - granted
+    if missing_scopes:
+        return _oauth_error_redirect("required_youtube_permissions_not_granted")
 
     access_token = tokens.get("access_token")
     refresh_token = tokens.get("refresh_token")
