@@ -89,17 +89,20 @@ async def _background_history_backfill(profile_id: str, owner_id: str):
         await youtube_backfill_history(profile_id=profile_id, user={"user_id": owner_id})
         await db.platform_connections.update_one(
             {"profile_id": profile_id, "owner_id": owner_id, "platform": "youtube"},
-            {"$set": {"history_last_error": None}},
+            {"$set": {"history_last_error": None, "history_backfill_status": "complete"}},
         )
     except HTTPException as exc:
         await db.platform_connections.update_one(
             {"profile_id": profile_id, "owner_id": owner_id, "platform": "youtube"},
-            {"$set": {"history_last_error": str(exc.detail)[:300]}},
+            {"$set": {"history_last_error": str(exc.detail)[:300], "history_backfill_status": "error"}},
         )
     except Exception:
         await db.platform_connections.update_one(
             {"profile_id": profile_id, "owner_id": owner_id, "platform": "youtube"},
-            {"$set": {"history_last_error": "Historical Analytics import failed. Retry from Connections."}},
+            {"$set": {
+                "history_last_error": "Historical Analytics import failed. Retry from Connections.",
+                "history_backfill_status": "error",
+            }},
         )
 
 
@@ -563,6 +566,10 @@ async def youtube_callback(
         imported = result["content_imported"]
         seen = result["videos_seen"]
         if YOUTUBE_ANALYTICS_SCOPE in granted:
+            await db.platform_connections.update_one(
+                {"profile_id": profile_id, "owner_id": owner_id, "platform": "youtube"},
+                {"$set": {"history_backfill_status": "running", "history_last_error": None}},
+            )
             background_tasks.add_task(_background_history_backfill, profile_id, owner_id)
         return RedirectResponse(
             f"{_frontend_url()}/connections?youtube=connected&imported={imported}&videos={seen}"
