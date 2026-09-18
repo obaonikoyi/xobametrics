@@ -8,6 +8,7 @@ from database import db, client
 from auth import auth_router, hash_password
 from routes import api_router
 from youtube import router as youtube_router, _configured as youtube_configured
+from youtube_history import router as youtube_history_router
 from models import new_id, now_iso
 import storage
 import seed as seed_mod
