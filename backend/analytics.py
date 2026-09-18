@@ -42,17 +42,42 @@ async def _content_for_release(release_id: str):
     return await db.content_items.find({"release_id": release_id}, {"_id": 0}).to_list(1000)
 
 
+def _snapshot_priority(snapshot: dict) -> int:
+    """Prefer authoritative completed-day history over ad-hoc same-day observations."""
+    source = snapshot.get("source")
+    if source == "youtube_analytics_history":
+        return 30
+    if source == "youtube_api":
+        return 20
+    return 10
+
+
+def _dedupe_snapshots_by_content_date(snaps):
+    chosen = {}
+    for s in snaps:
+        key = (s.get("content_item_id"), s.get("date"))
+        if not all(key):
+            continue
+        current = chosen.get(key)
+        if current is None or _snapshot_priority(s) > _snapshot_priority(current):
+            chosen[key] = s
+    return chosen
+
+
 async def _latest_snapshots_by_content(content_ids):
-    """Return the most recent (max date) snapshot per content item."""
+    """Return the most recent snapshot per content item, de-duping same-day sources."""
     if not content_ids:
         return {}
     snaps = await db.metric_snapshots.find(
         {"content_item_id": {"$in": content_ids}}, {"_id": 0}
     ).to_list(200000)
+    snaps = list(_dedupe_snapshots_by_content_date(snaps).values())
     latest = {}
     for s in snaps:
         cid = s["content_item_id"]
         if cid not in latest or s["date"] > latest[cid]["date"]:
+            latest[cid] = s
+        elif s["date"] == latest[cid]["date"] and _snapshot_priority(s) > _snapshot_priority(latest[cid]):
             latest[cid] = s
     return latest
 
@@ -138,7 +163,7 @@ async def release_timeseries(release_id: str, metric: str = "reach") -> dict:
         {"content_item_id": {"$in": cids}}, {"_id": 0}
     ).to_list(200000) if cids else []
     by_date = {}
-    for s in snaps:
+    for s in _dedupe_snapshots_by_content_date(snaps).values():
         d = s["date"]
         by_date.setdefault(d, 0)
         by_date[d] += s.get(metric, 0) or 0
@@ -158,7 +183,7 @@ async def release_race(profile_id: str, release_ids, metric: str = "reach", max_
             {"content_item_id": {"$in": cids}}, {"_id": 0}
         ).to_list(200000) if cids else []
         by_offset = {}
-        for s in snaps:
+        for s in _dedupe_snapshots_by_content_date(snaps).values():
             off = s.get("day_offset")
             if off is None or off < 0 or off > max_day:
                 continue
