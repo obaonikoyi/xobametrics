@@ -134,6 +134,7 @@ async def youtube_history_status(
         "history_end_date": connection.get("history_end_date") if connection else None,
         "history_points_written": connection.get("history_points_written", 0) if connection else 0,
         "history_rows_received": connection.get("history_rows_received", 0) if connection else 0,
+        "history_last_error": connection.get("history_last_error") if connection else None,
     }
 
 
@@ -274,6 +275,7 @@ async def youtube_backfill_history(
                 "history_end_date": end_date.isoformat(),
                 "history_rows_received": len(rows),
                 "history_points_written": len(ops),
+                "history_last_error": None,
             }
         },
     )
