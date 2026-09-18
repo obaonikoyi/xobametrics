@@ -135,6 +135,7 @@ async def youtube_history_status(
         "history_points_written": connection.get("history_points_written", 0) if connection else 0,
         "history_rows_received": connection.get("history_rows_received", 0) if connection else 0,
         "history_last_error": connection.get("history_last_error") if connection else None,
+        "backfill_status": connection.get("history_backfill_status") if connection else None,
     }
 
 
