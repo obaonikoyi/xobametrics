@@ -12,7 +12,7 @@ export default function Connections() {
   const { activeProfile } = useWorkspace();
   const [dataByPlatform, setDataByPlatform] = useState({});
   const [youtube, setYoutube] = useState({ configured: false, connection: null });
-  const [youtubeHistory, setYoutubeHistory] = useState({ scope_granted: false, backfilled_at: null, history_points_written: 0 });
+  const [youtubeHistory, setYoutubeHistory] = useState({ scope_granted: false, backfilled_at: null, history_points_written: 0, backfill_status: null, history_last_error: null });
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [busy, setBusy] = useState("");
@@ -135,8 +135,14 @@ export default function Connections() {
         )}
         {total != null && <p className="mt-1 text-xs text-muted-foreground">{compactNumber(total)} stored YouTube views across imported content</p>}
         {conn?.last_synced_at && connected && <p className="mt-1 text-[11px] text-muted-foreground">Last synced {String(conn.last_synced_at).slice(0, 16).replace("T", " ")} UTC</p>}
-        {connected && youtubeHistory.backfilled_at && (
+        {connected && youtubeHistory.backfill_status === "running" && (
+          <p className="mt-2 text-xs text-primary">Historical YouTube Analytics are importing in the background…</p>
+        )}
+        {connected && youtubeHistory.backfilled_at && youtubeHistory.backfill_status !== "running" && (
           <p className="mt-1 text-[11px] text-muted-foreground">Historical Analytics imported through {youtubeHistory.history_end_date} · {compactNumber(youtubeHistory.history_points_written)} daily points</p>
+        )}
+        {connected && youtubeHistory.history_last_error && (
+          <p className="mt-2 text-xs text-amber-500">{youtubeHistory.history_last_error}</p>
         )}
         {connected && !historyReady && (
           <p className="mt-3 text-xs text-amber-500">Reconnect once to add read-only YouTube Analytics permission for historical Day-0/7/30/90 comparisons.</p>
@@ -155,9 +161,9 @@ export default function Connections() {
         {connected && (
           <div className="mt-2">
             {historyReady ? (
-              <Button variant="outline" className="w-full gap-2" onClick={backfillYoutubeHistory} disabled={busy !== ""} data-testid="youtube-history">
-                <RefreshCw className={`h-4 w-4 ${busy === "youtube-history" ? "animate-spin" : ""}`} />
-                {youtubeHistory.backfilled_at ? "Refresh historical analytics" : "Import historical analytics"}
+              <Button variant="outline" className="w-full gap-2" onClick={backfillYoutubeHistory} disabled={busy !== "" || youtubeHistory.backfill_status === "running"} data-testid="youtube-history">
+                <RefreshCw className={`h-4 w-4 ${busy === "youtube-history" || youtubeHistory.backfill_status === "running" ? "animate-spin" : ""}`} />
+                {youtubeHistory.backfill_status === "running" ? "Importing history…" : youtubeHistory.backfilled_at ? "Refresh historical analytics" : "Import historical analytics"}
               </Button>
             ) : (
               <Button variant="outline" className="w-full gap-2" onClick={connectYoutube} disabled={busy !== ""} data-testid="youtube-enable-history">
