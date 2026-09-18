@@ -50,6 +50,19 @@ class ReleaseCreate(BaseModel):
     description: Optional[str] = None
 
 
+class ReleaseUpdate(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1)
+    release_date: Optional[str] = None
+    description: Optional[str] = None
+
+
+class ReleaseMergeRequest(BaseModel):
+    source_release_ids: List[str] = Field(min_length=1)
+    title: Optional[str] = Field(default=None, min_length=1)
+    release_date: Optional[str] = None
+    description: Optional[str] = None
+
+
 class ContentCreate(BaseModel):
     release_id: str
     title: str

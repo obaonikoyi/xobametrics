@@ -183,8 +183,12 @@ async def release_race(profile_id: str, release_ids, metric: str = "reach", max_
             {"content_item_id": {"$in": cids}}, {"_id": 0}
         ).to_list(200000) if cids else []
         by_offset = {}
+        release_day = _parse_date(release["release_date"])
         for s in _dedupe_snapshots_by_content_date(snaps).values():
-            off = s.get("day_offset")
+            try:
+                off = (_parse_date(s["date"]) - release_day).days
+            except Exception:
+                off = s.get("day_offset")
             if off is None or off < 0 or off > max_day:
                 continue
             by_offset.setdefault(off, 0)

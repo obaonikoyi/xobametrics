@@ -5,7 +5,7 @@ from typing import Optional
 from database import db
 from auth import get_current_user
 from models import (
-    ProfileCreate, ConnectionCreate, ReleaseCreate, ContentCreate,
+    ProfileCreate, ConnectionCreate, ReleaseCreate, ReleaseUpdate, ReleaseMergeRequest, ContentCreate,
     AiInsightRequest, AiAskRequest, ReportCreate, CsvCommitRequest,
     new_id, now_iso,
 )
@@ -36,6 +36,14 @@ async def _owned_release(release_id: str, user: dict) -> dict:
     if not rel:
         raise HTTPException(status_code=404, detail="Release not found")
     return rel
+
+
+def _release_date(value: str) -> str:
+    from datetime import date as _date
+    try:
+        return _date.fromisoformat(str(value)[:10]).isoformat()
+    except Exception:
+        raise HTTPException(status_code=422, detail="Release date must be YYYY-MM-DD")
 
 
 # ---------- Workspaces & Profiles ----------
@@ -145,13 +153,101 @@ async def create_release(body: ReleaseCreate, user: dict = Depends(get_current_u
         "workspace_id": prof["workspace_id"],
         "owner_id": user["user_id"],
         "title": body.title,
-        "release_date": body.release_date,
+        "release_date": _release_date(body.release_date),
         "cover": body.cover or "#3B82F6",
         "description": body.description,
         "created_at": now_iso(),
     }
     await db.releases.insert_one(rel)
     return {"release": _clean(rel)}
+
+
+@api_router.patch("/releases/{release_id}")
+async def update_release(release_id: str, body: ReleaseUpdate, user: dict = Depends(get_current_user)):
+    await _owned_release(release_id, user)
+    changes = body.model_dump(exclude_unset=True)
+    if "release_date" in changes and changes["release_date"] is not None:
+        changes["release_date"] = _release_date(changes["release_date"])
+    if not changes:
+        return {"release": await _owned_release(release_id, user)}
+    changes["updated_at"] = now_iso()
+    await db.releases.update_one(
+        {"id": release_id, "owner_id": user["user_id"]},
+        {"$set": changes},
+    )
+    return {"release": await _owned_release(release_id, user)}
+
+
+@api_router.post("/releases/{target_release_id}/merge")
+async def merge_releases(
+    target_release_id: str,
+    body: ReleaseMergeRequest,
+    user: dict = Depends(get_current_user),
+):
+    target = await _owned_release(target_release_id, user)
+    source_ids = list(dict.fromkeys(
+        rid for rid in body.source_release_ids if rid and rid != target_release_id
+    ))
+    if not source_ids:
+        raise HTTPException(status_code=400, detail="Select at least one other release to merge")
+
+    sources = await db.releases.find(
+        {
+            "id": {"$in": source_ids},
+            "owner_id": user["user_id"],
+            "profile_id": target["profile_id"],
+        },
+        {"_id": 0},
+    ).to_list(len(source_ids))
+    if len(sources) != len(source_ids):
+        raise HTTPException(status_code=404, detail="One or more selected releases were not found")
+
+    content = await db.content_items.find(
+        {
+            "release_id": {"$in": source_ids},
+            "owner_id": user["user_id"],
+            "profile_id": target["profile_id"],
+        },
+        {"_id": 0, "id": 1},
+    ).to_list(10000)
+    content_ids = [item["id"] for item in content]
+
+    if content_ids:
+        await db.content_items.update_many(
+            {"id": {"$in": content_ids}, "owner_id": user["user_id"]},
+            {"$set": {"release_id": target_release_id}},
+        )
+        await db.metric_snapshots.update_many(
+            {"content_item_id": {"$in": content_ids}, "profile_id": target["profile_id"]},
+            {"$set": {"release_id": target_release_id}},
+        )
+
+    changes = {
+        "source": "organized",
+        "updated_at": now_iso(),
+    }
+    if body.title is not None:
+        changes["title"] = body.title
+    if body.release_date is not None:
+        changes["release_date"] = _release_date(body.release_date)
+    if body.description is not None:
+        changes["description"] = body.description
+
+    await db.releases.update_one(
+        {"id": target_release_id, "owner_id": user["user_id"]},
+        {"$set": changes, "$unset": {"source_external_id": ""}},
+    )
+    await db.releases.delete_many(
+        {"id": {"$in": source_ids}, "owner_id": user["user_id"], "profile_id": target["profile_id"]}
+    )
+
+    merged = await _owned_release(target_release_id, user)
+    return {
+        "release": merged,
+        "merged_release_ids": source_ids,
+        "content_moved": len(content_ids),
+        "content_count": await db.content_items.count_documents({"release_id": target_release_id}),
+    }
 
 
 @api_router.get("/releases/{release_id}")
