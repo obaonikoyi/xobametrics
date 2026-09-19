@@ -9,6 +9,7 @@ from auth import auth_router, hash_password
 from routes import api_router
 from youtube import router as youtube_router, _configured as youtube_configured
 from youtube_history import router as youtube_history_router
+from soundcloud import router as soundcloud_router, _configured as soundcloud_configured
 from models import new_id, now_iso
 import storage
 import seed as seed_mod
@@ -23,6 +24,7 @@ app.include_router(auth_router)
 app.include_router(api_router)
 app.include_router(youtube_router)
 app.include_router(youtube_history_router)
+app.include_router(soundcloud_router)
 
 _frontend = os.environ.get("FRONTEND_URL", "").strip().rstrip("/")
 _origins = [o.strip().rstrip("/") for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
@@ -46,8 +48,9 @@ async def health():
     return {
         "status": "ok",
         "service": "xobametrics-api",
-        "live_integrations_available": youtube_configured(),
+        "live_integrations_available": youtube_configured() or soundcloud_configured(),
         "youtube_configured": youtube_configured(),
+        "soundcloud_configured": soundcloud_configured(),
     }
 
 
