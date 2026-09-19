@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import api, { compactNumber, formatApiErrorDetail } from "@/lib/api";
 import { useWorkspace } from "@/context/WorkspaceContext";
 import CsvUploadDialog from "@/components/CsvUploadDialog";
-import { Freshness } from "@/components/common";
+import { Freshness, PlatformBadge } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,7 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Plus, Upload, Disc3, ArrowUpRight, GitMerge, Check, X } from "lucide-react";
+import { Plus, Upload, Disc3, ArrowUpRight, GitMerge, Check, X, Sparkles, Link2Off } from "lucide-react";
 
 const coverIsImage = (cover) => typeof cover === "string" && /^https?:\/\//i.test(cover);
 
@@ -29,13 +29,18 @@ export default function Releases() {
   const [mergeOpen, setMergeOpen] = useState(false);
   const [mergeTarget, setMergeTarget] = useState("");
   const [mergeForm, setMergeForm] = useState({ title: "", release_date: "", description: "" });
+  const [suggestions, setSuggestions] = useState([]);
 
   const load = useCallback(async () => {
     if (!activeProfile) return;
     setLoading(true);
     try {
-      const { data } = await api.get(`/releases?profile_id=${encodeURIComponent(activeProfile.id)}`);
-      setReleases(data.releases);
+      const [releaseResult, suggestionResult] = await Promise.all([
+        api.get(`/releases?profile_id=${encodeURIComponent(activeProfile.id)}`),
+        api.get(`/release-match-suggestions?profile_id=${encodeURIComponent(activeProfile.id)}`).catch(() => ({ data: { suggestions: [] } })),
+      ]);
+      setReleases(releaseResult.data.releases);
+      setSuggestions(suggestionResult.data.suggestions || []);
     } finally { setLoading(false); }
   }, [activeProfile]);
 
@@ -113,6 +118,32 @@ export default function Releases() {
     } finally { setBusy(false); }
   };
 
+  const reviewSuggestion = (suggestion) => {
+    const ids = [suggestion.release_a.id, suggestion.release_b.id];
+    setSelected(ids);
+    const targetId = suggestion.suggested_target_id || ids[0];
+    const target = releases.find((r) => r.id === targetId) || releases.find((r) => r.id === ids[0]);
+    setMergeTarget(target?.id || ids[0]);
+    setMergeForm({
+      title: target?.title || suggestion.release_a.title,
+      release_date: target?.release_date || suggestion.release_a.release_date,
+      description: target?.description || "",
+    });
+    setMergeOpen(true);
+  };
+
+  const dismissSuggestion = async (suggestion) => {
+    try {
+      await api.post(
+        `/release-match-suggestions/dismiss?profile_id=${encodeURIComponent(activeProfile.id)}&release_a=${encodeURIComponent(suggestion.release_a.id)}&release_b=${encodeURIComponent(suggestion.release_b.id)}`
+      );
+      setSuggestions((items) => items.filter((item) => item.match_key !== suggestion.match_key));
+      toast.success("Match suggestion dismissed.");
+    } catch (e) {
+      toast.error(formatApiErrorDetail(e?.response?.data?.detail || e?.message));
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -155,6 +186,39 @@ export default function Releases() {
         <div className="rounded-xl border border-primary/20 bg-primary/[0.05] p-4 text-sm text-muted-foreground">
           Select uploads that belong to the same song or campaign. The target release keeps its identity; all selected content and metric history move into it. Release Race will align the campaign to the target Day 0.
         </div>
+      )}
+
+      {!organizing && suggestions.length > 0 && (
+        <section className="rounded-xl border border-primary/20 bg-card p-4" data-testid="release-match-suggestions">
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-primary" /><h2 className="font-display font-semibold">Suggested campaign matches</h2></div>
+              <p className="mt-1 text-xs text-muted-foreground">XobaMetrics found similarly named releases across platforms. Nothing is merged until you approve it.</p>
+            </div>
+            <span className="rounded-full border border-border bg-muted px-2.5 py-1 text-xs text-muted-foreground">{suggestions.length}</span>
+          </div>
+          <div className="space-y-2">
+            {suggestions.slice(0, 5).map((s) => (
+              <div key={s.match_key} className="flex flex-col gap-3 rounded-lg border border-border p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                    <span className="truncate">{s.release_a.title}</span>
+                    <span className="text-muted-foreground">↔</span>
+                    <span className="truncate">{s.release_b.title}</span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                    {[...new Set([...(s.release_a.platforms || []), ...(s.release_b.platforms || [])])].map((p) => <PlatformBadge key={p} platform={p} />)}
+                    <span className="text-[11px] text-muted-foreground">{s.confidence === "strong" ? "Strong match" : "Possible match"} · {s.date_gap_days} day{s.date_gap_days === 1 ? "" : "s"} apart</span>
+                  </div>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <Button size="sm" className="gap-1.5" onClick={() => reviewSuggestion(s)}><GitMerge className="h-3.5 w-3.5" /> Review merge</Button>
+                  <Button size="sm" variant="ghost" className="gap-1.5" onClick={() => dismissSuggestion(s)} title="Not the same campaign"><Link2Off className="h-3.5 w-3.5" /> Not a match</Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       {loading ? (

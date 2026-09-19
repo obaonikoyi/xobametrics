@@ -1,4 +1,8 @@
 import uuid
+import re
+import unicodedata
+from datetime import date as _date
+from difflib import SequenceMatcher
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Response, Request
 from typing import Optional
 
@@ -39,11 +43,56 @@ async def _owned_release(release_id: str, user: dict) -> dict:
 
 
 def _release_date(value: str) -> str:
-    from datetime import date as _date
     try:
         return _date.fromisoformat(str(value)[:10]).isoformat()
     except Exception:
         raise HTTPException(status_code=422, detail="Release date must be YYYY-MM-DD")
+
+
+_MATCH_NOISE = {
+    "official", "audio", "video", "music", "visualizer", "visualiser",
+    "lyric", "lyrics", "short", "shorts", "teaser", "promo", "clip",
+    "full", "mv", "4k", "hd",
+}
+
+
+def _normalized_release_title(title: str) -> tuple[str, set[str]]:
+    text = unicodedata.normalize("NFKD", str(title or "")).lower()
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = re.sub(r"\([^)]*\)|\[[^]]*\]", " ", text)
+    text = re.sub(r"[^a-z0-9]+", " ", text).strip()
+    tokens = [t for t in text.split() if t not in _MATCH_NOISE]
+    return " ".join(tokens), set(tokens)
+
+
+def _match_score(a: dict, b: dict) -> tuple[float, int]:
+    na, ta = _normalized_release_title(a.get("title"))
+    nb, tb = _normalized_release_title(b.get("title"))
+    if not na or not nb:
+        return 0.0, 9999
+    try:
+        gap = abs((_date.fromisoformat(a["release_date"][:10]) - _date.fromisoformat(b["release_date"][:10])).days)
+    except Exception:
+        gap = 9999
+    if na == nb:
+        base = 0.96
+    else:
+        if not ta or not tb:
+            return 0.0, gap
+        jaccard = len(ta & tb) / max(1, len(ta | tb))
+        ratio = SequenceMatcher(None, na, nb).ratio()
+        base = 0.55 * ratio + 0.45 * jaccard
+    if gap <= 14:
+        base += 0.08
+    elif gap <= 45:
+        base += 0.04
+    elif gap > 120 and na != nb:
+        base -= 0.12
+    return min(1.0, max(0.0, base)), gap
+
+
+def _match_key(a: str, b: str) -> str:
+    return "::".join(sorted((a, b)))
 
 
 # ---------- Workspaces & Profiles ----------
@@ -248,6 +297,114 @@ async def merge_releases(
         "content_moved": len(content_ids),
         "content_count": await db.content_items.count_documents({"release_id": target_release_id}),
     }
+
+
+@api_router.get("/release-match-suggestions")
+async def release_match_suggestions(profile_id: str, user: dict = Depends(get_current_user)):
+    await _owned_profile(profile_id, user)
+    releases = await db.releases.find(
+        {"profile_id": profile_id, "owner_id": user["user_id"]}, {"_id": 0}
+    ).to_list(2000)
+    if len(releases) < 2:
+        return {"suggestions": []}
+
+    release_ids = [r["id"] for r in releases]
+    content = await db.content_items.find(
+        {"release_id": {"$in": release_ids}, "owner_id": user["user_id"]},
+        {"_id": 0, "release_id": 1, "platform": 1},
+    ).to_list(20000)
+    platforms = {rid: set() for rid in release_ids}
+    for item in content:
+        if item.get("release_id") in platforms and item.get("platform"):
+            platforms[item["release_id"]].add(item["platform"])
+
+    dismissed_docs = await db.release_match_dismissals.find(
+        {"profile_id": profile_id, "owner_id": user["user_id"]}, {"_id": 0, "match_key": 1}
+    ).to_list(10000)
+    dismissed = {d.get("match_key") for d in dismissed_docs}
+
+    suggestions = []
+    for i, a in enumerate(releases):
+        for b in releases[i + 1:]:
+            key = _match_key(a["id"], b["id"])
+            if key in dismissed:
+                continue
+            pa = platforms.get(a["id"], set())
+            pb = platforms.get(b["id"], set())
+            # A match should add at least some platform diversity. This keeps
+            # the feature focused on cross-platform campaign organization.
+            if not pa or not pb or len(pa | pb) < 2:
+                continue
+            score, gap = _match_score(a, b)
+            if score < 0.76:
+                continue
+
+            # Prefer an already-organized campaign, otherwise the earlier
+            # release as the merge target because Day 0 should normally be the
+            # campaign's first publication date.
+            if a.get("source") == "organized" and b.get("source") != "organized":
+                target_id = a["id"]
+            elif b.get("source") == "organized" and a.get("source") != "organized":
+                target_id = b["id"]
+            else:
+                target_id = min((a, b), key=lambda r: r.get("release_date") or "9999-12-31")["id"]
+
+            confidence = "strong" if score >= 0.90 else "possible"
+            suggestions.append({
+                "match_key": key,
+                "score": round(score, 3),
+                "confidence": confidence,
+                "date_gap_days": gap,
+                "suggested_target_id": target_id,
+                "reason": (
+                    "Very similar title across platforms"
+                    if score >= 0.90
+                    else "Similar title and release timing across platforms"
+                ),
+                "release_a": {
+                    "id": a["id"], "title": a["title"], "release_date": a["release_date"],
+                    "cover": a.get("cover"), "platforms": sorted(pa),
+                },
+                "release_b": {
+                    "id": b["id"], "title": b["title"], "release_date": b["release_date"],
+                    "cover": b.get("cover"), "platforms": sorted(pb),
+                },
+            })
+
+    suggestions.sort(key=lambda s: (-s["score"], s["date_gap_days"]))
+    return {"suggestions": suggestions[:30]}
+
+
+@api_router.post("/release-match-suggestions/dismiss")
+async def dismiss_release_match(
+    profile_id: str,
+    release_a: str,
+    release_b: str,
+    user: dict = Depends(get_current_user),
+):
+    await _owned_profile(profile_id, user)
+    if release_a == release_b:
+        raise HTTPException(status_code=400, detail="A release cannot be matched with itself")
+    owned = await db.releases.count_documents({
+        "id": {"$in": [release_a, release_b]},
+        "profile_id": profile_id,
+        "owner_id": user["user_id"],
+    })
+    if owned != 2:
+        raise HTTPException(status_code=404, detail="One or more releases were not found")
+    key = _match_key(release_a, release_b)
+    await db.release_match_dismissals.update_one(
+        {"owner_id": user["user_id"], "profile_id": profile_id, "match_key": key},
+        {"$set": {
+            "owner_id": user["user_id"],
+            "profile_id": profile_id,
+            "match_key": key,
+            "release_ids": sorted([release_a, release_b]),
+            "dismissed_at": now_iso(),
+        }},
+        upsert=True,
+    )
+    return {"ok": True, "match_key": key}
 
 
 @api_router.get("/releases/{release_id}")
