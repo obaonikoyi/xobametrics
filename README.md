@@ -2,30 +2,67 @@
 
 > ## Status: paused — September 2026
 >
-> **Paused deliberately, with the reason recorded rather than left to guess.**
+> **Paused to concentrate on two other projects — not because the hard parts
+> are missing. They are built.** An earlier version of this note said real
+> platform OAuth was never implemented. That was wrong: it repeated a stale
+> line from the PRD instead of reading the code.
 >
-> Two things stopped it, and only one of them is fixable by writing more code.
+> ### What is actually built
 >
-> **The dependency problem.** Creator analytics is only as good as its data,
-> and that data belongs to YouTube, SoundCloud, Audiomack and the rest. Real
-> OAuth sync was never implemented; CSV import stands in for it. Building the
-> sync is weeks of work against terms I do not control, for a product that
-> stops working the day any one of those platforms changes its mind.
+> - **Google/YouTube OAuth 2.0** (`backend/youtube.py`, 615 lines): auth, token
+>   and revoke endpoints, scope checking for `youtube.readonly` and
+>   `yt-analytics.readonly`, refresh tokens encrypted at rest with Fernet, and a
+>   background historical import that runs after the callback without delaying
+>   Google's redirect
+> - **SoundCloud OAuth 2.1** (`backend/soundcloud.py`, 608 lines): authorization
+>   code flow with PKCE S256, single-use refresh tokens, URNs as stable ids
+> - Email/password auth with JWT and brute-force lockout, CSV import, the
+>   Day-0 "Release Race" comparison, reports, and a grounded AI panel
+> - ~4,100 lines of Python and ~6,000 of JavaScript, with 55 tests
 >
-> **The unfinished deployment.** `MONGO_URL` is not configured, backend
-> startup and readiness are unverified on the custom domain, and the AI path
-> needs a valid backend key. The frontend is served at `metrics.3xoba.com`;
-> that confirms frontend delivery and nothing else.
+> Both OAuth routers are registered in `server.py`; the frontend has the
+> connection and callback pages.
 >
-> **What would need to be true to restart this:** a decision that the OAuth
-> work is worth it for at least one platform, and a finished backend
-> deployment. The second is a good weekend. The first is a bet on other
-> companies' goodwill.
+> ### What is genuinely unfinished
 >
-> **Honest note on the old data:** the previous synthetic sync worker has been
-> disabled and old snapshots require provenance review. Demo data is not live
-> analytics, and nothing in this repository should be read as real
-> measurement.
+> **The deployment.** `MONGO_URL` is not configured, and backend startup and
+> readiness are unverified against the custom domain. `metrics.3xoba.com`
+> serves the frontend; that confirms frontend delivery and nothing else.
+> Full-stack sign-in, CSV import and AI have not been verified end to end in
+> production.
+>
+> ### Build-tool coupling, removed September 2026
+>
+> This project was scaffolded with the Emergent builder, which left two runtime
+> dependencies on that vendor. Both are gone:
+>
+> - `ai.py` imported a chat wrapper from a wheel served off the vendor's
+>   CloudFront bucket rather than PyPI — so the backend could not install at all
+>   if that URL went away. It now calls the provider through `ai_provider.py`,
+>   an interface with an OpenAI implementation, matching the rule this codebase's
+>   sibling project already follows.
+> - `storage.py` POSTed every uploaded CSV to the vendor's hosted object store.
+>   It now writes to a directory this deployment controls, set by
+>   `UPLOAD_ARCHIVE_DIR`. Unset means uploads are simply not archived; imports
+>   still work, as they already did when the remote store failed.
+>
+> A third was found while doing this and is a security issue rather than
+> coupling: `POST /api/auth/session` took a session id from the caller, asked
+> `demobackend.emergentagent.com` whose it was, and signed in — or created — an
+> account for whatever email came back, already beta approved, with no
+> signature, issuer or audience verified locally. It is now **off unless
+> `ENABLE_EMERGENT_GOOGLE_LOGIN=true`**, and the right fix is a real Google
+> OAuth flow, which `youtube.py` already shows how to do.
+>
+> The vendor's committed cron scripts, git identity, agent test protocol and
+> markers have been removed and gitignored. `docs/PRD.md` was kept — it is a
+> real product document — and marked where it has gone stale.
+>
+> ### Honest note on stored data
+>
+> The previous synthetic sync worker is disabled and old snapshots need
+> provenance review. Demo data is not live analytics. Nothing in this
+> repository should be read as real measurement.
 
 A creator analytics dashboard with a React/CRACO frontend, FastAPI backend and MongoDB database. It groups content into releases and compares stored observations by release age (Day 0 is the original release date).
 

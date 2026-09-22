@@ -20,7 +20,6 @@ distro==1.9.0
 dnspython==2.8.0
 ecdsa==0.19.2
 email-validator==2.3.0
-emergentintegrations @ https://d33sy5i8bnduwe.cloudfront.net/simple/emergentintegrations/emergentintegrations-0.2.0-py3-none-any.whl
 execnet==2.1.2
 fastapi==0.110.1
 fastuuid==0.14.0
@@ -55,7 +54,6 @@ jq==1.12.0
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 librt==0.15.0
-# LiteLLM is provided by emergentintegrations' versioned wheel dependency.
 # Do not add a second direct URL with a different hash fragment: pip treats
 # that as a conflicting requirement even when the wheel filename matches.
 markdown-it-py==4.2.0

@@ -10,7 +10,23 @@ from database import db
 from models import RegisterRequest, LoginRequest, SessionRequest, new_id, now_iso
 
 JWT_ALGORITHM = "HS256"
+
+# Sign-in delegated to the scaffolding vendor's demo host.
+#
+# POST /api/auth/session takes a session id from the caller, asks this host who
+# it belongs to, and signs in -- or creates -- an account for whatever email
+# comes back, already beta approved. Nothing is verified locally: no signature,
+# no issuer, no audience. The whole guarantee is that the remote host is honest
+# and reachable, and the host is named "demobackend".
+#
+# So it is off unless a deployment explicitly turns it on, and it is not the
+# way to add Google sign-in. The right fix is a real Google OAuth flow, which
+# this codebase already knows how to do -- see youtube.py, which does the
+# authorization code exchange against accounts.google.com and validates scopes.
 EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
+EMERGENT_LOGIN_ENABLED = (
+    os.environ.get("ENABLE_EMERGENT_GOOGLE_LOGIN", "false").strip().lower() == "true"
+)
 
 auth_router = APIRouter(prefix="/api/auth")
 
@@ -181,6 +197,11 @@ async def login(body: LoginRequest, response: Response, request: Request):
 
 @auth_router.post("/session")
 async def google_session(body: SessionRequest, response: Response):
+    if not EMERGENT_LOGIN_ENABLED:
+        raise HTTPException(
+            status_code=404,
+            detail="This sign-in method is disabled. Use email and password.",
+        )
     try:
         r = requests.get(EMERGENT_SESSION_URL, headers={"X-Session-ID": body.session_id}, timeout=30)
         r.raise_for_status()

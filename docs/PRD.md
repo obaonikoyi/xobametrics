@@ -1,5 +1,19 @@
 # XobaMetrics — PRD
 
+> **Stale in places — kept as the record of the original intent, September 2026.**
+>
+> Two lines below no longer describe the code and were the source of an
+> incorrect claim in the README:
+>
+> - *"YouTube/SoundCloud OAuth is UI-stubbed for now"* — both are now real
+>   OAuth implementations. See `backend/youtube.py` and `backend/soundcloud.py`.
+> - *"Object Storage: Emergent object storage for CSV uploads"* — uploads now
+>   go to a directory this deployment controls, via `UPLOAD_ARCHIVE_DIR`.
+>
+> The AI provider is also no longer the vendor's universal key; it is an
+> interface in `backend/ai_provider.py`. Read the code before trusting a line
+> here.
+
 ## Original Problem Statement
 AI-assisted creator analytics platform that starts with your own music/content data. Imports metrics (CSV + platform OAuth), snapshots them over time, auto-charts performance, compares releases fairly on a Day-0 timeline ("Release Race"), and answers plain-English questions grounded ONLY in backend-computed numbers (AI never touches the DB directly and never invents figures).
 

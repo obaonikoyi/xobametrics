@@ -1,13 +1,9 @@
-import os
 import json
 from fastapi import HTTPException
-from emergentintegrations.llm.chat import LlmChat, UserMessage
 
 import analytics
+from ai_provider import build_provider
 from database import db
-
-MODEL_PROVIDER = os.environ.get("AI_PROVIDER", "openai")
-MODEL_NAME = os.environ.get("AI_MODEL", "gpt-5.6-luna")
 
 SYSTEM_PROMPT = (
     "You are Xoba AI, the analyst for XobaMetrics, a creator analytics platform.\n"
@@ -21,18 +17,21 @@ SYSTEM_PROMPT = (
 )
 
 
-def _chat(session_id: str) -> LlmChat:
-    api_key = os.environ.get("EMERGENT_LLM_KEY", "").strip()
-    if not api_key:
+async def _ask(prompt: str) -> str:
+    """
+    Send one grounded prompt and return the text.
+
+    Built per call rather than held, so a key or model configured after
+    start-up takes effect without a restart -- and so a deployment with no
+    model configured still starts and still serves its analytics.
+    """
+    provider = build_provider()
+    if not getattr(provider, "configured", False):
         raise HTTPException(
             status_code=503,
             detail="AI insights are not configured yet. Your stored analytics are still available.",
         )
-    return LlmChat(
-        api_key=api_key,
-        session_id=session_id,
-        system_message=SYSTEM_PROMPT,
-    ).with_model(MODEL_PROVIDER, MODEL_NAME)
+    return await provider.complete(SYSTEM_PROMPT, prompt)
 
 
 def _fmt(n):
@@ -105,8 +104,7 @@ async def generate_insight(profile_id: str, release_id=None) -> dict:
         "then 3 concrete recommendations. Respond as JSON with keys 'summary' (string) and "
         "'recommendations' (array of short strings). Only use the numbers above."
     )
-    chat = _chat(f"insight_{profile_id}")
-    resp = await chat.send_message(UserMessage(text=prompt))
+    resp = await _ask(prompt)
     return _parse_json_response(resp, facts)
 
 
@@ -119,8 +117,7 @@ async def answer_question(profile_id: str, question: str) -> dict:
         "Answer using ONLY the facts above. If the facts are insufficient, say so plainly. "
         "Reference specific figures. Keep it to a few sentences."
     )
-    chat = _chat(f"ask_{profile_id}")
-    resp = await chat.send_message(UserMessage(text=prompt))
+    resp = await _ask(prompt)
     return {"answer": resp.strip(), "grounded": facts["release_count"] > 0, "facts_used": facts}
 
 
