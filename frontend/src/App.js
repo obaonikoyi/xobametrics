@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, Outlet } from "react-router-dom";
 import "@/App.css";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
@@ -9,7 +9,6 @@ import { BACKEND_CONFIG_ERROR } from "@/lib/api";
 import AppShell from "@/components/AppShell";
 import AiPanel from "@/components/AiPanel";
 import Login from "@/pages/Login";
-import AuthCallback from "@/pages/AuthCallback";
 import Dashboard from "@/pages/Dashboard";
 import Releases from "@/pages/Releases";
 import ReleaseDetail from "@/pages/ReleaseDetail";
@@ -40,8 +39,6 @@ function Protected() {
 }
 
 function AppRouter() {
-  const location = useLocation();
-  if (location.hash?.includes("session_id=")) return <AuthCallback />;
   return (
     <Routes>
       <Route path="/login" element={<Login />} />

@@ -67,7 +67,6 @@ async def ready():
 async def startup():
     await db.users.create_index("email", unique=True)
     await db.users.create_index("user_id")
-    await db.user_sessions.create_index("session_token")
     await db.creator_profiles.create_index("owner_id")
     await db.releases.create_index("profile_id")
     await db.content_items.create_index("release_id")
