@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import api from "@/lib/api";
+import { isGoogleLanding } from "@/lib/googleSignIn";
 
 const AuthContext = createContext(null);
 
@@ -18,9 +19,19 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  // Read during the first render: GoogleCallback's effect runs before this
+  // provider's and clears the hash, so checking inside the effect is too late.
+  const [googleLanding] = useState(isGoogleLanding);
+
   useEffect(() => {
+    // Returning from Google with a login code: GoogleCallback sets the session,
+    // and a concurrent /me could otherwise resolve after it and sign out.
+    if (googleLanding) {
+      setLoading(false);
+      return;
+    }
     checkAuth();
-  }, [checkAuth]);
+  }, [checkAuth, googleLanding]);
 
   const setSession = useCallback((data) => {
     if (data?.token) localStorage.setItem("xoba_token", data.token);

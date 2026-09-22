@@ -47,9 +47,20 @@ Retain these frontend settings:
 
 Set `REACT_APP_BACKEND_URL` in Vercel to the actual HTTPS backend origin, with no `/api` suffix or credentials. This variable is public, compiled into the frontend. Never put MongoDB credentials, OAuth client secrets or AI keys in a `REACT_APP_` variable. Redeploy after setting it. Until configured, the frontend deliberately shows a setup notice rather than sending requests to `undefined/api`.
 
-The backend `FRONTEND_URL` should be `https://metrics.3xoba.com`. Its `CORS_ORIGINS` may temporarily include the verified Vercel production alias. Do not use `*` with authenticated requests. Verify cookie/Bearer behaviour on the final domain with a real test account. Sign-in is email and password only; Google sign-in has been removed until a real Google OAuth sign-in flow is built. Google sign-in is distinct from authorising access to a YouTube channel.
+The backend `FRONTEND_URL` should be `https://metrics.3xoba.com`. Its `CORS_ORIGINS` may temporarily include the verified Vercel production alias. Do not use `*` with authenticated requests. Verify cookie/Bearer behaviour on the final domain with a real test account. Google sign-in is distinct from authorising access to a YouTube channel; see below.
 
 Official environment-variable guidance: https://vercel.com/docs/environment-variables
+
+### Sign in with Google
+
+Optional: until it is configured the button is hidden and email/password works as before.
+
+1. In Google Cloud Console, open **APIs & Services → OAuth consent screen**. Set the app name and support email, and add the scopes `openid`, `email` and `profile` (none of them need Google verification).
+2. Open **Credentials** and use a **Web application** OAuth client. The one YouTube uses is fine. Under **Authorized redirect URIs** add exactly `https://xobametrics-production.up.railway.app/api/auth/google/callback` (your `PUBLIC_API_URL` followed by `/api/auth/google/callback`).
+3. On the backend service set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and, if the API address differs, `GOOGLE_REDIRECT_URI`. `FRONTEND_URL` must be the site people use, because Google sign-in returns there (`/auth/google`).
+4. Redeploy the backend. `/api/health` reports `google_signin_configured: true`, and the login page shows **Continue with Google**.
+
+Behaviour to expect: a new Google user gets a new account. Someone whose email already has a password account is asked to sign in with the password and choose **Connect Google sign-in** from the account menu. After that, either method opens the same account. This is deliberate: registration does not verify email, so matching by email alone would let whoever registered an address first keep a password into the real owner's account.
 
 ## 4. Acceptance tests before inviting users
 
@@ -59,6 +70,7 @@ Official environment-variable guidance: https://vercel.com/docs/environment-vari
 * A CSV with more than 50 rows keeps every permitted row; upload and commit counts match. Do not interpret daily counts as cumulative totals.
 * Day 0 uses the actual release date, not the connection date or first available CSV observation. Missing history must remain unknown.
 * Connections and sync do not claim API success before real adapters exist.
+* Google sign-in is tested with a real Google account: new account, password account refused by email then linked from the menu, and sign-in again after linking.
 * AI and public report links are tested separately with controlled accounts. A successful build alone is insufficient.
 
 ## 5. Next development priorities

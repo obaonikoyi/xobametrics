@@ -16,6 +16,12 @@
 >   Google's redirect
 > - **SoundCloud OAuth 2.1** (`backend/soundcloud.py`, 608 lines): authorization
 >   code flow with PKCE S256, single-use refresh tokens, URNs as stable ids
+> - **Sign in with Google** (`backend/google_auth.py`): OpenID Connect with
+>   PKCE; the ID token's signature, issuer, audience, expiry and nonce are
+>   checked here, and the login is bound to the browser tab that started it.
+>   A Google identity never takes over a password account by email: password
+>   users link Google from the account menu. See
+>   [setting it up](docs/DEPLOYMENT.md#sign-in-with-google).
 > - Email/password auth with JWT and brute-force lockout, CSV import, the
 >   Day-0 "Release Race" comparison, reports, and a grounded AI panel
 > - ~4,100 lines of Python and ~6,000 of JavaScript, with 55 tests
@@ -46,8 +52,8 @@
 > - **"Continue with Google"** asked `demobackend.emergentagent.com` whose a
 >   session was and signed in whatever email came back, with nothing verified
 >   locally. The button, callback page and `POST /api/auth/session` are
->   removed. Sign-in is email and password until a real Google OAuth sign-in
->   flow is built; `backend/youtube.py` already shows the pattern.
+>   removed, and replaced by a real Google sign-in in `backend/google_auth.py`
+>   that verifies Google's ID token itself.
 > - **The frontend page** loaded the vendor's script and sent PostHog
 >   analytics, with session recording, to the vendor's host under the
 >   vendor's project key. Both are removed.
@@ -89,6 +95,7 @@ Frontend: `cd frontend`, install dependencies using the project's package-manage
 ```sh
 node --test frontend/tests/api-config.test.mjs
 python -m unittest discover -s backend/tests -p 'test_launch_safety_unit.py'
+python -m unittest discover -s backend/tests -p 'test_google_auth.py'
 ```
 
 These are isolated unit tests, not substitutes for database, OAuth and browser tests.

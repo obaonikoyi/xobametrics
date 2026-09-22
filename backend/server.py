@@ -6,6 +6,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from database import db, client
 from auth import auth_router, hash_password
+from google_auth import router as google_auth_router, _configured as google_signin_configured
 from routes import api_router
 from youtube import router as youtube_router, _configured as youtube_configured
 from youtube_history import router as youtube_history_router
@@ -21,6 +22,7 @@ logger = logging.getLogger("xobametrics")
 scheduler = AsyncIOScheduler(timezone="UTC")
 app = FastAPI(title="XobaMetrics API")
 app.include_router(auth_router)
+app.include_router(google_auth_router)
 app.include_router(api_router)
 app.include_router(youtube_router)
 app.include_router(youtube_history_router)
@@ -51,6 +53,7 @@ async def health():
         "live_integrations_available": youtube_configured() or soundcloud_configured(),
         "youtube_configured": youtube_configured(),
         "soundcloud_configured": soundcloud_configured(),
+        "google_signin_configured": google_signin_configured(),
     }
 
 
@@ -67,6 +70,10 @@ async def ready():
 async def startup():
     await db.users.create_index("email", unique=True)
     await db.users.create_index("user_id")
+    await db.users.create_index(
+        "google_sub", unique=True,
+        partialFilterExpression={"google_sub": {"$type": "string"}},
+    )
     await db.creator_profiles.create_index("owner_id")
     await db.releases.create_index("profile_id")
     await db.content_items.create_index("release_id")

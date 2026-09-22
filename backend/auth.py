@@ -53,6 +53,7 @@ def _public_user(user: dict) -> dict:
         "picture": user.get("picture"),
         "role": user.get("role", "user"),
         "auth_provider": user.get("auth_provider", "password"),
+        "google_linked": bool(user.get("google_sub")),
     }
 
 

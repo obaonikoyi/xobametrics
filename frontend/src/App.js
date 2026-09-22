@@ -9,6 +9,7 @@ import { BACKEND_CONFIG_ERROR } from "@/lib/api";
 import AppShell from "@/components/AppShell";
 import AiPanel from "@/components/AiPanel";
 import Login from "@/pages/Login";
+import GoogleCallback from "@/pages/GoogleCallback";
 import Dashboard from "@/pages/Dashboard";
 import Releases from "@/pages/Releases";
 import ReleaseDetail from "@/pages/ReleaseDetail";
@@ -42,6 +43,7 @@ function AppRouter() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/auth/google" element={<GoogleCallback />} />
       <Route path="/share/:shareId" element={<SharedReport />} />
       <Route element={<Protected />}>
         <Route path="/dashboard" element={<Dashboard />} />

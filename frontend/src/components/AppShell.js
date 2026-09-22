@@ -1,6 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
+import { formatApiErrorDetail } from "@/lib/api";
+import { googleSignInConfigured, startGoogleSignIn } from "@/lib/googleSignIn";
 import { useTheme } from "@/context/ThemeContext";
 import { useWorkspace } from "@/context/WorkspaceContext";
 import { useAi } from "@/context/AiContext";
@@ -12,7 +15,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Activity, LayoutDashboard, Disc3, Zap, PlugZap, FileBarChart, Sparkles,
-  Sun, Moon, ChevronDown, LogOut, Users, Check, Menu, X,
+  Sun, Moon, ChevronDown, LogOut, Users, Check, Menu, X, KeyRound,
 } from "lucide-react";
 
 const NAV = [
@@ -34,6 +37,19 @@ export default function AppShell({ children }) {
   const { openWith } = useAi();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [googleAvailable, setGoogleAvailable] = useState(false);
+
+  useEffect(() => {
+    googleSignInConfigured().then(setGoogleAvailable);
+  }, []);
+
+  const connectGoogle = async () => {
+    try {
+      await startGoogleSignIn("link");
+    } catch (err) {
+      toast.error(formatApiErrorDetail(err.response?.data?.detail) || err.message);
+    }
+  };
 
   const isManager = workspaces.some((w) => w.type === "manager") || profiles.length > 1;
 
@@ -141,6 +157,11 @@ export default function AppShell({ children }) {
                   <div className="text-xs font-normal text-muted-foreground">{user?.email}</div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
+                {googleAvailable && !user?.google_linked && (
+                  <DropdownMenuItem data-testid="connect-google-button" onClick={connectGoogle} className="gap-2">
+                    <KeyRound className="h-4 w-4" /> Connect Google sign-in
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem data-testid="logout-button" onClick={() => { logout(); navigate("/login"); }} className="gap-2 text-destructive">
                   <LogOut className="h-4 w-4" /> Sign out
                 </DropdownMenuItem>
