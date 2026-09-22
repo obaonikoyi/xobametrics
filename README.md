@@ -1,5 +1,32 @@
 # XobaMetrics
 
+> ## Status: paused — September 2026
+>
+> **Paused deliberately, with the reason recorded rather than left to guess.**
+>
+> Two things stopped it, and only one of them is fixable by writing more code.
+>
+> **The dependency problem.** Creator analytics is only as good as its data,
+> and that data belongs to YouTube, SoundCloud, Audiomack and the rest. Real
+> OAuth sync was never implemented; CSV import stands in for it. Building the
+> sync is weeks of work against terms I do not control, for a product that
+> stops working the day any one of those platforms changes its mind.
+>
+> **The unfinished deployment.** `MONGO_URL` is not configured, backend
+> startup and readiness are unverified on the custom domain, and the AI path
+> needs a valid backend key. The frontend is served at `metrics.3xoba.com`;
+> that confirms frontend delivery and nothing else.
+>
+> **What would need to be true to restart this:** a decision that the OAuth
+> work is worth it for at least one platform, and a finished backend
+> deployment. The second is a good weekend. The first is a bet on other
+> companies' goodwill.
+>
+> **Honest note on the old data:** the previous synthetic sync worker has been
+> disabled and old snapshots require provenance review. Demo data is not live
+> analytics, and nothing in this repository should be read as real
+> measurement.
+
 A creator analytics dashboard with a React/CRACO frontend, FastAPI backend and MongoDB database. It groups content into releases and compares stored observations by release age (Day 0 is the original release date).
 
 **Frontend address:** `https://metrics.3xoba.com` — verified to return the Vercel frontend over HTTPS on 15 September 2026. This confirms frontend delivery, not working sign-in or live analytics.
