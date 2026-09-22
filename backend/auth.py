@@ -4,29 +4,11 @@ import bcrypt
 import secrets
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Request, Response, HTTPException, Depends
-import requests
 
 from database import db
-from models import RegisterRequest, LoginRequest, SessionRequest, new_id, now_iso
+from models import RegisterRequest, LoginRequest, new_id, now_iso
 
 JWT_ALGORITHM = "HS256"
-
-# Sign-in delegated to the scaffolding vendor's demo host.
-#
-# POST /api/auth/session takes a session id from the caller, asks this host who
-# it belongs to, and signs in -- or creates -- an account for whatever email
-# comes back, already beta approved. Nothing is verified locally: no signature,
-# no issuer, no audience. The whole guarantee is that the remote host is honest
-# and reachable, and the host is named "demobackend".
-#
-# So it is off unless a deployment explicitly turns it on, and it is not the
-# way to add Google sign-in. The right fix is a real Google OAuth flow, which
-# this codebase already knows how to do -- see youtube.py, which does the
-# authorization code exchange against accounts.google.com and validates scopes.
-EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
-EMERGENT_LOGIN_ENABLED = (
-    os.environ.get("ENABLE_EMERGENT_GOOGLE_LOGIN", "false").strip().lower() == "true"
-)
 
 auth_router = APIRouter(prefix="/api/auth")
 
@@ -100,29 +82,7 @@ async def _ensure_workspace(user_id: str, name: str) -> dict:
 
 
 async def get_current_user(request: Request) -> dict:
-    # 1. Google session_token (cookie or Bearer)
-    session_token = request.cookies.get("session_token")
-    if not session_token:
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            maybe = auth_header[7:]
-            sess = await db.user_sessions.find_one({"session_token": maybe}, {"_id": 0})
-            if sess:
-                session_token = maybe
-    if session_token:
-        sess = await db.user_sessions.find_one({"session_token": session_token}, {"_id": 0})
-        if sess:
-            expires_at = sess["expires_at"]
-            if isinstance(expires_at, str):
-                expires_at = datetime.fromisoformat(expires_at)
-            if expires_at.tzinfo is None:
-                expires_at = expires_at.replace(tzinfo=timezone.utc)
-            if expires_at >= datetime.now(timezone.utc):
-                user = await db.users.find_one({"user_id": sess["user_id"]}, {"_id": 0})
-                if user:
-                    return user
-
-    # 2. JWT access token (cookie or Bearer)
+    # JWT access token (cookie or Bearer)
     token = request.cookies.get("access_token")
     if not token:
         auth_header = request.headers.get("Authorization", "")
@@ -195,61 +155,12 @@ async def login(body: LoginRequest, response: Response, request: Request):
     return {"user": _public_user(user), "token": token}
 
 
-@auth_router.post("/session")
-async def google_session(body: SessionRequest, response: Response):
-    if not EMERGENT_LOGIN_ENABLED:
-        raise HTTPException(
-            status_code=404,
-            detail="This sign-in method is disabled. Use email and password.",
-        )
-    try:
-        r = requests.get(EMERGENT_SESSION_URL, headers={"X-Session-ID": body.session_id}, timeout=30)
-        r.raise_for_status()
-        data = r.json()
-    except Exception:
-        raise HTTPException(status_code=401, detail="Google authentication failed")
-
-    email = data["email"].lower()
-    user = await db.users.find_one({"email": email}, {"_id": 0})
-    if not user:
-        user_id = new_id("user")
-        user = {
-            "user_id": user_id,
-            "email": email,
-            "name": data.get("name"),
-            "picture": data.get("picture"),
-            "role": "user",
-            "auth_provider": "google",
-            "beta_approved": True,
-            "created_at": now_iso(),
-        }
-        await db.users.insert_one(user)
-        await _ensure_workspace(user_id, data.get("name") or email.split("@")[0])
-    else:
-        await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"picture": data.get("picture")}})
-        await _ensure_workspace(user["user_id"], user.get("name") or email.split("@")[0])
-
-    session_token = data["session_token"]
-    await db.user_sessions.insert_one({
-        "user_id": user["user_id"],
-        "session_token": session_token,
-        "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
-        "created_at": now_iso(),
-    })
-    _set_cookie(response, "session_token", session_token, 7 * 24 * 3600)
-    return {"user": _public_user(user), "token": session_token}
-
-
 @auth_router.get("/me")
 async def me(user: dict = Depends(get_current_user)):
     return _public_user(user)
 
 
 @auth_router.post("/logout")
-async def logout(request: Request, response: Response):
-    session_token = request.cookies.get("session_token")
-    if session_token:
-        await db.user_sessions.delete_one({"session_token": session_token})
+async def logout(response: Response):
     response.delete_cookie("access_token", path="/")
-    response.delete_cookie("session_token", path="/")
     return {"ok": True}

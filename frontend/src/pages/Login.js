@@ -35,12 +35,6 @@ export default function Login() {
     }
   };
 
-  const google = () => {
-    // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-    const redirectUrl = window.location.origin + "/dashboard";
-    window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
-  };
-
   return (
     <div className="xoba-grid-bg flex min-h-screen w-full items-center justify-center bg-background p-4">
       <div className="grid w-full max-w-5xl overflow-hidden rounded-2xl border border-border bg-card shadow-2xl lg:grid-cols-2">
@@ -97,13 +91,6 @@ export default function Login() {
               {busy ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}
             </Button>
           </motion.form>
-
-          <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground">
-            <div className="h-px flex-1 bg-border" /> or <div className="h-px flex-1 bg-border" />
-          </div>
-          <Button variant="outline" data-testid="google-login-button" onClick={google} className="w-full gap-2">
-            <img src="https://www.google.com/favicon.ico" alt="" className="h-4 w-4" /> Continue with Google
-          </Button>
 
           <p className="mt-6 text-center text-sm text-muted-foreground">
             {mode === "login" ? "New to XobaMetrics?" : "Already have an account?"}{" "}

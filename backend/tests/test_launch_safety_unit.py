@@ -2,7 +2,7 @@
 
 Execute with: python -m unittest discover -s backend/tests -p 'test_launch_safety_unit.py'
 Functions are compiled from the actual source with imports/route decorators
-excluded so these tests run independently of Emergent-only dependencies.
+excluded so these tests run without installing the backend dependencies.
 These are not full HTTP/end-to-end deployment tests.
 """
 import ast

@@ -2,7 +2,7 @@
 
 ## Status and scope — 15 September 2026
 
-The React/CRACO frontend builds on Vercel. This is not yet proof of a functioning full-stack production app. At review time, Vercel listed `xobametrics-gamma.vercel.app` and preview aliases, but not `metrics.3xoba.com`. Its `/api/auth/me` returned the frontend HTML, not a JSON API response. No XobaMetrics backend service was found in the connected Railway account. An existing Emergent backend has not been verified.
+The React/CRACO frontend builds on Vercel. This is not yet proof of a functioning full-stack production app. At review time, Vercel listed `xobametrics-gamma.vercel.app` and preview aliases, but not `metrics.3xoba.com`. Its `/api/auth/me` returned the frontend HTML, not a JSON API response. No XobaMetrics backend service was found in the connected Railway account.
 
 Keep the implemented React + FastAPI + MongoDB stack. Do not rewrite it just for deployment. This patch stops simulated platform sync, blocks fake connect/reconnect success, guards the AI focus-release scope, preserves CSV rows beyond the preview, and makes missing backend configuration visible. It does not implement OAuth, create a database, attach DNS, or migrate production data.
 
@@ -18,7 +18,7 @@ Official instructions: https://vercel.com/docs/domains/working-with-domains/add-
 
 ## 2. Establish the production backend
 
-First identify whether a stable, separately deployed Emergent backend should be retained. Do not treat a temporary preview as production. Otherwise provision a dedicated FastAPI service (for example Railway) with a production MongoDB database after approving the hosting cost and data-migration plan. Do not reuse another application's database.
+Provision a dedicated FastAPI service (for example Railway) with a production MongoDB database after approving the hosting cost and data-migration plan. Do not reuse another application's database.
 
 Use `backend` as the service root. The start command for a persistent Python service is:
 
@@ -26,9 +26,9 @@ Use `backend` as the service root. The start command for a persistent Python ser
 uvicorn server:app --host 0.0.0.0 --port "$PORT" --workers 1
 ```
 
-Install from `backend/requirements.txt` in a clean build. Its Emergent integration package and custom wheel require a portability check. The full backend dependency installation has NOT been tested outside Emergent in this review. A successful frontend build does not test these Python dependencies.
+Install from `backend/requirements.txt` in a clean build. It lists only the backend's direct dependencies, all from PyPI; `backend/requirements-dev.txt` adds the test tools.
 
-Copy variable names from `backend/.env.example`. Store real values in the backend host's secret/environment controls, never in GitHub, public files, screenshots or chat. Requirements include `MONGO_URL`, `DB_NAME`, `JWT_SECRET`, and the exact allowed frontend origins. `EMERGENT_LLM_KEY` is needed for the existing AI provider integration. Confirm the chosen AI model is supported by that provider. A model name in source is not verification of provider availability.
+Copy variable names from `backend/.env.example`. Store real values in the backend host's secret/environment controls, never in GitHub, public files, screenshots or chat. Requirements include `MONGO_URL`, `DB_NAME`, `JWT_SECRET`, and the exact allowed frontend origins. `OPENAI_API_KEY` and `AI_MODEL` are needed for the AI panel. Confirm your key can call the chosen model. A model name in source is not verification of provider availability.
 
 Leave `ENABLE_SCHEDULED_SYNC=false` and `ENABLE_DEMO_SEED=false`. No adapter currently fetches platform metrics. Enabling the scheduler only schedules a safe no-op; it does not enable OAuth. Use one application worker until proper distributed job locking is implemented. Rotate any sample administrator password previously shared or used during testing. Existing passwords are not reset by a restart.
 
@@ -47,7 +47,7 @@ Retain these frontend settings:
 
 Set `REACT_APP_BACKEND_URL` in Vercel to the actual HTTPS backend origin, with no `/api` suffix or credentials. This variable is public, compiled into the frontend. Never put MongoDB credentials, OAuth client secrets or AI keys in a `REACT_APP_` variable. Redeploy after setting it. Until configured, the frontend deliberately shows a setup notice rather than sending requests to `undefined/api`.
 
-The backend `FRONTEND_URL` should be `https://metrics.3xoba.com`. Its `CORS_ORIGINS` may temporarily include the verified Vercel production alias. Do not use `*` with authenticated requests. Verify cookie/Bearer behaviour and the Emergent Google sign-in return flow on the final domain with a real test account. Google sign-in is distinct from authorising access to a YouTube channel.
+The backend `FRONTEND_URL` should be `https://metrics.3xoba.com`. Its `CORS_ORIGINS` may temporarily include the verified Vercel production alias. Do not use `*` with authenticated requests. Verify cookie/Bearer behaviour on the final domain with a real test account. Sign-in is email and password only; Google sign-in has been removed until a real Google OAuth sign-in flow is built. Google sign-in is distinct from authorising access to a YouTube channel.
 
 Official environment-variable guidance: https://vercel.com/docs/environment-variables
 
@@ -59,7 +59,7 @@ Official environment-variable guidance: https://vercel.com/docs/environment-vari
 * A CSV with more than 50 rows keeps every permitted row; upload and commit counts match. Do not interpret daily counts as cumulative totals.
 * Day 0 uses the actual release date, not the connection date or first available CSV observation. Missing history must remain unknown.
 * Connections and sync do not claim API success before real adapters exist.
-* AI, public report links and Google sign-in are tested separately with controlled accounts. A successful build alone is insufficient.
+* AI and public report links are tested separately with controlled accounts. A successful build alone is insufficient.
 
 ## 5. Next development priorities
 

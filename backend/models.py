@@ -24,10 +24,6 @@ class LoginRequest(BaseModel):
     password: str
 
 
-class SessionRequest(BaseModel):
-    session_id: str
-
-
 # ---------- Domain ----------
 class ProfileCreate(BaseModel):
     workspace_id: str

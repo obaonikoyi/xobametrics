@@ -31,32 +31,34 @@
 > Full-stack sign-in, CSV import and AI have not been verified end to end in
 > production.
 >
-> ### Build-tool coupling, removed September 2026
+> ### Builder-platform coupling, removed September 2026
 >
-> This project was scaffolded with the Emergent builder, which left two runtime
-> dependencies on that vendor. Both are gone:
+> This project was scaffolded with the Emergent builder, which wired its own
+> services into the code. All of them are gone, and nothing here needs
+> Emergent to install, build or run:
 >
-> - `ai.py` imported a chat wrapper from a wheel served off the vendor's
->   CloudFront bucket rather than PyPI — so the backend could not install at all
->   if that URL went away. It now calls the provider through `ai_provider.py`,
->   an interface with an OpenAI implementation, matching the rule this codebase's
->   sibling project already follows.
-> - `storage.py` POSTed every uploaded CSV to the vendor's hosted object store.
->   It now writes to a directory this deployment controls, set by
->   `UPLOAD_ARCHIVE_DIR`. Unset means uploads are simply not archived; imports
->   still work, as they already did when the remote store failed.
->
-> A third was found while doing this and is a security issue rather than
-> coupling: `POST /api/auth/session` took a session id from the caller, asked
-> `demobackend.emergentagent.com` whose it was, and signed in — or created — an
-> account for whatever email came back, already beta approved, with no
-> signature, issuer or audience verified locally. It is now **off unless
-> `ENABLE_EMERGENT_GOOGLE_LOGIN=true`**, and the right fix is a real Google
-> OAuth flow, which `youtube.py` already shows how to do.
->
-> The vendor's committed cron scripts, git identity, agent test protocol and
-> markers have been removed and gitignored. `docs/PRD.md` was kept — it is a
-> real product document — and marked where it has gone stale.
+> - **AI** called the model through a wrapper wheel served from the vendor's
+>   CDN rather than PyPI. It now goes through `backend/ai_provider.py`, an
+>   interface with an OpenAI implementation (`OPENAI_API_KEY`, `AI_MODEL`).
+> - **CSV archiving** sent every upload to the vendor's object store. It now
+>   writes to a directory set by `UPLOAD_ARCHIVE_DIR`; unset means uploads are
+>   not archived, and imports still work.
+> - **"Continue with Google"** asked `demobackend.emergentagent.com` whose a
+>   session was and signed in whatever email came back, with nothing verified
+>   locally. The button, callback page and `POST /api/auth/session` are
+>   removed. Sign-in is email and password until a real Google OAuth sign-in
+>   flow is built; `backend/youtube.py` already shows the pattern.
+> - **The frontend page** loaded the vendor's script and sent PostHog
+>   analytics, with session recording, to the vendor's host under the
+>   vendor's project key. Both are removed.
+> - **Build tooling**: the vendor's editor overlay and visual-edits packages
+>   (downloaded from its CDN), the preview health-check plugin, and the
+>   backend's ~130-package template requirements are replaced by the 15
+>   direct dependencies the backend imports (`requirements-dev.txt` adds the
+>   test tools).
+> - **Repository leftovers**: cron scripts, markers, git identity, agent test
+>   reports and playbooks are removed, and `.emergent/` is gitignored.
+>   `docs/PRD.md` was kept as a real product document and marked where stale.
 >
 > ### Honest note on stored data
 >
@@ -72,9 +74,7 @@ A creator analytics dashboard with a React/CRACO frontend, FastAPI backend and M
 
 The existing Railway `xobametrics` service now builds from `/backend`, starts with `uvicorn server:app --host 0.0.0.0 --port "$PORT" --workers 1`, and checks `/api/ready`. `FRONTEND_URL`, explicit `CORS_ORIGINS`, `DB_NAME`, and `JWT_SECRET` are configured on that service. Scheduled sync and automatic demo seeding remain disabled. Secret values are stored outside the repository.
 
-The first Python install blocker was an unavailable PyPI package, `emergentintegrations`. `backend/requirements.txt` now points directly to its published versioned wheel. The duplicate LiteLLM direct requirement was removed because its hash-fragment URL conflicted with the URL declared by the Emergent wheel. Railway subsequently reported that the Python dependencies installed successfully.
-
-**Still required:** connect a dedicated MongoDB database (`MONGO_URL` is not configured), verify backend startup/readiness, then configure the frontend's `REACT_APP_BACKEND_URL` and redeploy. AI also needs a valid backend-side `EMERGENT_LLM_KEY`. No new database or paid infrastructure was provisioned during this configuration step. No existing data was migrated or deleted. Full-stack sign-in, CSV import, and AI have not yet been verified on the custom domain.
+**Still required:** connect a dedicated MongoDB database (`MONGO_URL` is not configured), verify backend startup/readiness, then configure the frontend's `REACT_APP_BACKEND_URL` and redeploy. AI also needs backend-side `OPENAI_API_KEY` and `AI_MODEL`. No new database or paid infrastructure was provisioned during this configuration step. No existing data was migrated or deleted. Full-stack sign-in, CSV import, and AI have not yet been verified on the custom domain.
 
 ## Read this before deployment
 
