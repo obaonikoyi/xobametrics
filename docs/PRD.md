@@ -12,8 +12,7 @@
 >
 > The AI provider is also no longer the vendor's universal key; it is an
 > interface in `backend/ai_provider.py`. The "Emergent-managed Google login"
-> below has been removed: sign-in is email and password until a real Google
-> OAuth sign-in flow is built. Read the code before trusting a line
+> below has been replaced by a real Google sign-in in `backend/google_auth.py`. Read the code before trusting a line
 > here.
 
 ## Original Problem Statement
