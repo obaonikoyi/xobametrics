@@ -14,6 +14,8 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
+  const [inviteRequired, setInviteRequired] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const { setSession } = useAuth();
@@ -22,13 +24,16 @@ export default function Login() {
 
   useEffect(() => {
     googleSignInConfigured().then(setGoogleAvailable);
+    api.get("/auth/signup-policy")
+      .then(({ data }) => setInviteRequired(Boolean(data?.invite_required)))
+      .catch(() => setInviteRequired(false));
   }, []);
 
   const google = async () => {
     setBusy(true);
     setError("");
     try {
-      await startGoogleSignIn("signin");
+      await startGoogleSignIn("signin", mode === "register" ? inviteCode : "");
     } catch (err) {
       setError(formatApiErrorDetail(err.response?.data?.detail) || err.message);
       setBusy(false);
@@ -41,7 +46,9 @@ export default function Login() {
     setError("");
     try {
       const path = mode === "login" ? "/auth/login" : "/auth/register";
-      const body = mode === "login" ? { email, password } : { email, password, name };
+      const body = mode === "login"
+        ? { email, password }
+        : { email, password, name, invite_code: inviteCode || null };
       const { data } = await api.post(path, body);
       setSession(data);
       navigate("/dashboard");
@@ -101,8 +108,14 @@ export default function Login() {
             </div>
             <div>
               <Label htmlFor="password">Password</Label>
-              <Input id="password" data-testid="auth-password-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required className="mt-1.5" />
+              <Input id="password" data-testid="auth-password-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required minLength={mode === "register" ? 8 : undefined} className="mt-1.5" />
             </div>
+            {mode === "register" && inviteRequired && (
+              <div>
+                <Label htmlFor="invite">Invite code</Label>
+                <Input id="invite" data-testid="auth-invite-input" value={inviteCode} onChange={(e) => setInviteCode(e.target.value)} placeholder="From your invitation" required autoComplete="off" className="mt-1.5" />
+              </div>
+            )}
             {error && <p data-testid="auth-error" className="text-sm text-destructive">{error}</p>}
             <Button type="submit" data-testid="auth-submit-button" disabled={busy} className="w-full">
               {busy ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}
