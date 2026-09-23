@@ -5,11 +5,15 @@ import api from "@/lib/api";
 // trip to Google in the same tab and is never sent anywhere else.
 const BROWSER_KEY = "xoba_google_browser_key";
 
-export async function startGoogleSignIn(mode = "signin") {
+export async function startGoogleSignIn(mode = "signin", inviteCode = "") {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   const key = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   sessionStorage.setItem(BROWSER_KEY, key);
-  const { data } = await api.post("/auth/google/start", { browser_key: key, mode });
+  const { data } = await api.post("/auth/google/start", {
+    browser_key: key,
+    mode,
+    invite_code: inviteCode || null,
+  });
   window.location.assign(data.auth_url);
 }
 
@@ -40,6 +44,8 @@ const REASONS = {
   different_google_account_already_linked: "Your account is already connected to a different Google account.",
   google_email_not_verified: "Google has not verified this account's email address.",
   sign_in_expired_or_already_used: "That sign-in link expired or was already used. Please try again.",
+  invite_required:
+    "XobaMetrics is invite-only for now. Choose \u201cCreate an account\u201d, enter your invite code, then continue with Google.",
 };
 
 export function googleErrorMessage(reason) {
