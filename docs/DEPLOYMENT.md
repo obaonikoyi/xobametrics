@@ -1,94 +1,132 @@
-# XobaMetrics: deployment and launch checklist
+# XobaMetrics: deployment
 
-## Status and scope — 15 September 2026
+| Part | Where | Address |
+| --- | --- | --- |
+| Frontend | Vercel project `xobametrics`, root `frontend`, Create React App | `https://xobametrics.com` (`www` redirects to it) |
+| Backend | Railway project `fulfilling-encouragement`, service `xobametrics`, root `backend` | `https://api.xobametrics.com` |
+| Database | Railway PostgreSQL service in the same project | private network only |
 
-The React/CRACO frontend builds on Vercel. This is not yet proof of a functioning full-stack production app. At review time, Vercel listed `xobametrics-gamma.vercel.app` and preview aliases, but not `metrics.3xoba.com`. Its `/api/auth/me` returned the frontend HTML, not a JSON API response. No XobaMetrics backend service was found in the connected Railway account.
+The old addresses (`metrics.3xoba.com`, `xobametrics-production.up.railway.app`)
+keep working during the move.
 
-Keep the implemented React + FastAPI + MongoDB stack. Do not rewrite it just for deployment. This patch stops simulated platform sync, blocks fake connect/reconnect success, guards the AI focus-release scope, preserves CSV rows beyond the preview, and makes missing backend configuration visible. It does not implement OAuth, create a database, attach DNS, or migrate production data.
+## 1. Domain and DNS
 
-## 1. Attach the custom domain
+`xobametrics.com` is registered with and served by Cloudflare. The domain is
+already attached on both sides (Vercel: `xobametrics.com` and
+`www.xobametrics.com`; Railway: `api.xobametrics.com`), and they verify on
+their own once these records exist.
 
-In Vercel, select **xobametrics → Settings → Domains → Add Domain**, then enter `metrics.3xoba.com`. Attach it to production rather than redirecting it to a different site.
+In Cloudflare → DNS → Records. Every record is **DNS only (grey cloud)**:
+Vercel and Railway issue their own certificates, and the proxy gets in the way.
 
-Copy the exact DNS record Vercel displays. A subdomain normally requires a CNAME with host/name `metrics`; the target is project-specific. Add or correct only that record at the authoritative DNS provider. Do not change the apex domain, move nameservers, or alter other Xoba applications. If Vercel manages the DNS, follow its automatic configuration flow. Wait for domain verification and an HTTPS certificate; then test the address.
+| Type | Name | Content |
+| --- | --- | --- |
+| A | `@` | `76.76.21.21` |
+| CNAME | `www` | `cname.vercel-dns.com` |
+| CNAME | `api` | `6lfzirog.up.railway.app` |
 
-The current connected Vercel tools provide project/deployment inspection but no domain-attachment or DNS-write action. That account-side step is not completed by committing this repository.
+Remove any parking A/AAAA/CNAME records Cloudflare created on `@` or `www`.
 
-Official instructions: https://vercel.com/docs/domains/working-with-domains/add-a-domain
+### Email anti-spoofing
 
-## 2. Establish the production backend
+The domain neither sends nor receives email, so tell the world to reject any
+that claims to be from it:
 
-Provision a dedicated FastAPI service (for example Railway) with a production MongoDB database after approving the hosting cost and data-migration plan. Do not reuse another application's database.
+| Type | Name | Content |
+| --- | --- | --- |
+| TXT | `@` | `v=spf1 -all` |
+| TXT | `_dmarc` | `v=DMARC1; p=reject; sp=reject; adkim=s; aspf=s` |
+| TXT | `*._domainkey` | `v=DKIM1; p=` |
+| MX | `@` | `.` priority `0` (null MX; skip if Cloudflare refuses it) |
 
-Use `backend` as the service root. The start command for a persistent Python service is:
+When the product starts sending email (sign-up confirmation, password reset),
+replace the SPF record with the provider's and add its DKIM keys; keep DMARC.
+To receive email with Cloudflare Email Routing instead, drop the null MX.
 
-```sh
-uvicorn server:app --host 0.0.0.0 --port "$PORT" --workers 1
-```
+Also: DNS → Settings → **Enable DNSSEC**. Optionally, once the site works, a
+CAA record `@` `0 issue "letsencrypt.org"` limits certificates to the issuer
+Vercel and Railway both use.
 
-Install from `backend/requirements.txt` in a clean build. It lists only the backend's direct dependencies, all from PyPI; `backend/requirements-dev.txt` adds the test tools.
+## 2. Database
 
-Copy variable names from `backend/.env.example`. Store real values in the backend host's secret/environment controls, never in GitHub, public files, screenshots or chat. Requirements include `MONGO_URL`, `DB_NAME`, `JWT_SECRET`, and the exact allowed frontend origins. `OPENAI_API_KEY` and `AI_MODEL` are needed for the AI panel. Confirm your key can call the chosen model. A model name in source is not verification of provider availability.
+The backend needs PostgreSQL 14 or newer; it creates its tables on start-up
+from `backend/schema.sql`.
 
-Leave `ENABLE_SCHEDULED_SYNC=false` and `ENABLE_DEMO_SEED=false`. No adapter currently fetches platform metrics. Enabling the scheduler only schedules a safe no-op; it does not enable OAuth. Use one application worker until proper distributed job locking is implemented. Rotate any sample administrator password previously shared or used during testing. Existing passwords are not reset by a restart.
+1. In the Railway project: **+ New → Database → PostgreSQL**.
+2. On the `xobametrics` service set `DATABASE_URL=${{Postgres.DATABASE_URL}}`.
+3. To bring the existing MongoDB data across, also set
+   `MONGO_MIGRATION_URL=${{MongoDB.MONGO_URL}}` and
+   `MONGO_MIGRATION_DB` to the old `DB_NAME` value.
+4. Deploy. On start-up the backend copies everything in one transaction, but
+   only while Postgres has no users, so a restart cannot copy twice or
+   overwrite anything. The deploy log shows a line starting
+   `Imported MongoDB data into Postgres` with the counts and every clean-up it
+   made (duplicates folded, orphans skipped).
+5. Check the site, then remove `MONGO_MIGRATION_URL`, `MONGO_MIGRATION_DB`,
+   `MONGO_URL` and `DB_NAME`. Keep the MongoDB service for a week or two as a
+   backup, then delete it. `pymongo` can then come out of
+   `backend/requirements.txt` along with `backend/mongo_import.py`.
 
-Back up any existing database before migration. Review old snapshots: the previous worker could add synthetic growth to ordinary connected accounts, including CSV-imported content. Historical provenance was not recorded reliably, so do not blindly delete records or assume every old snapshot is real. Preserve originals, quarantine suspect data, and reimport authoritative exports where appropriate. This patch does not modify or delete existing stored data.
+Everyone signs in again after this deploy: sessions are now stored in the
+database, and older tokens do not name one.
 
-## 3. Connect Vercel to the API
+## 3. Backend variables
 
-Retain these frontend settings:
+Names and notes are in `backend/.env.example`. Store values only in Railway.
 
-| Setting | Value |
-| --- | --- |
-| Root directory | `frontend` |
-| Framework | Create React App |
-| Build command | `yarn build` |
-| Output directory | `build` |
+- `DATABASE_URL`, `JWT_SECRET` (long and random)
+- `FRONTEND_URL=https://xobametrics.com`
+- `CORS_ORIGINS=https://xobametrics.com,https://metrics.3xoba.com` (never `*`)
+- `PUBLIC_API_URL=https://api.xobametrics.com`
+- `OPENAI_API_KEY`, `AI_MODEL` — a model your key can call
+- `BETA_INVITE_CODES` — comma-separated; empty means open sign-up
+- OAuth: `GOOGLE_*`, `YOUTUBE_*`, `SOUNDCLOUD_*` (redirect URIs on
+  `https://api.xobametrics.com/...`, registered identically with each provider)
+- `ENABLE_SCHEDULED_SYNC=true` to refresh connected platforms at 04:00 UTC;
+  `ENABLE_DEMO_SEED=false`
+- `ADMIN_EMAIL` / `ADMIN_PASSWORD` only to create a first admin; rotate any
+  password that has ever been shared
 
-Set `REACT_APP_BACKEND_URL` in Vercel to the actual HTTPS backend origin, with no `/api` suffix or credentials. This variable is public, compiled into the frontend. Never put MongoDB credentials, OAuth client secrets or AI keys in a `REACT_APP_` variable. Redeploy after setting it. Until configured, the frontend deliberately shows a setup notice rather than sending requests to `undefined/api`.
+Start command: `uvicorn server:app --host 0.0.0.0 --port "$PORT" --workers 1`
+(one worker: the scheduler runs in-process). Health check: `/api/ready`.
 
-The backend `FRONTEND_URL` should be `https://metrics.3xoba.com`. Its `CORS_ORIGINS` may temporarily include the verified Vercel production alias. Do not use `*` with authenticated requests. Verify cookie/Bearer behaviour on the final domain with a real test account. Google sign-in is distinct from authorising access to a YouTube channel; see below.
+## 4. Frontend variables
 
-Official environment-variable guidance: https://vercel.com/docs/environment-variables
+In Vercel set `REACT_APP_BACKEND_URL=https://api.xobametrics.com` (no `/api`,
+no secrets — it is compiled into public JavaScript) and redeploy. Vercel
+installs with the committed `yarn.lock`.
 
-### Sign in with Google
+## 5. Sign in with Google
 
-Optional: until it is configured the button is hidden and email/password works as before.
+Optional: until it is configured the button is hidden and email/password works.
 
-1. In Google Cloud Console, open **APIs & Services → OAuth consent screen**. Set the app name and support email, and add the scopes `openid`, `email` and `profile` (none of them need Google verification).
-2. Open **Credentials** and use a **Web application** OAuth client. The one YouTube uses is fine. Under **Authorized redirect URIs** add exactly `https://xobametrics-production.up.railway.app/api/auth/google/callback` (your `PUBLIC_API_URL` followed by `/api/auth/google/callback`).
-3. On the backend service set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and, if the API address differs, `GOOGLE_REDIRECT_URI`. `FRONTEND_URL` must be the site people use, because Google sign-in returns there (`/auth/google`).
-4. Redeploy the backend. `/api/health` reports `google_signin_configured: true`, and the login page shows **Continue with Google**.
+1. Google Cloud Console → **APIs & Services → OAuth consent screen**: app name,
+   support email, authorised domain `xobametrics.com`, scopes `openid`, `email`,
+   `profile` (none need Google verification).
+2. **Credentials** → a **Web application** OAuth client (the YouTube one is
+   fine). Under **Authorized redirect URIs** add
+   `https://api.xobametrics.com/api/auth/google/callback`.
+3. On Railway set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (and
+   `GOOGLE_REDIRECT_URI` only if the API address differs from
+   `PUBLIC_API_URL`). Google returns people to `FRONTEND_URL` + `/auth/google`.
+4. Redeploy. `/api/health` reports `google_signin_configured: true`.
 
-Behaviour to expect: a new Google user gets a new account. Someone whose email already has a password account is asked to sign in with the password and choose **Connect Google sign-in** from the account menu. After that, either method opens the same account. This is deliberate: registration does not verify email, so matching by email alone would let whoever registered an address first keep a password into the real owner's account.
+A new Google user gets a new account (with an invite code when codes are set:
+they enter it under **Create an account** before continuing with Google).
+Someone whose email already has a password account is asked to sign in with
+the password and choose **Connect Google sign-in** from the account menu —
+deliberately, since sign-up does not verify email addresses.
 
-## 4. Acceptance tests before inviting users
+## 6. Acceptance checks
 
-* API `/api/health` returns JSON; `/api/ready` returns ready only when MongoDB responds.
-* Signup/login, refresh, logout and profile switching work on the custom domain.
-* One user cannot access another user's releases, reports or AI insights.
-* A CSV with more than 50 rows keeps every permitted row; upload and commit counts match. Do not interpret daily counts as cumulative totals.
-* Day 0 uses the actual release date, not the connection date or first available CSV observation. Missing history must remain unknown.
-* Connections and sync do not claim API success before real adapters exist.
-* Google sign-in is tested with a real Google account: new account, password account refused by email then linked from the menu, and sign-in again after linking.
-* AI and public report links are tested separately with controlled accounts. A successful build alone is insufficient.
-
-## 5. Next development priorities
-
-1. Complete domain, stable backend, database and frontend API configuration.
-2. Fix remaining analytics semantics: daily versus cumulative imports; account-level followers versus content metrics; non-deduplicated views/plays versus unique reach; incomplete campaign observations and first-week coverage. Require explicit original publish dates on CSV imports.
-3. Separate and label demo data throughout dashboards and reports. Add data provenance and a safe review process for historical synthetic snapshots.
-4. Implement real YouTube OAuth, state/PKCE as appropriate, secure server-side token storage, channel/video discovery, metrics fetching and reconnect behaviour. Credentials alone do not implement these flows.
-5. Add durable, idempotent observation storage and jobs with unique keys, UTC timestamps, locking, retries and rate-limit handling. Never fabricate missing history.
-6. Add signup/AI/import/sync rate limits, AI budget controls, account deletion/disconnect, revocable reports, privacy notices, and automated response grounding checks. Prompt instructions alone do not guarantee factual AI output.
-7. Run a small private beta with the founder's real catalogue, then add SoundCloud when its access and metrics have been verified. Defer more platforms and billing until the data is trustworthy.
-
-## Local regression checks
-
-```sh
-node --test frontend/tests/api-config.test.mjs
-python -m unittest discover -s backend/tests -p 'test_launch_safety_unit.py'
-python -m compileall -q backend
-```
-
-The launch-safety tests isolate source functions with mocked dependencies; they do not connect to MongoDB or replace HTTP, OAuth, browser or production smoke tests. Older tests that expect stubbed connection success must be updated to the explicit unavailable contract.
+- `/api/health` returns JSON; `/api/ready` returns ready.
+- Sign up (with an invite code if set), sign out, sign in; after signing out
+  the old session no longer works.
+- A second account cannot see the first account's releases, reports or AI.
+- CSV import: every row kept, dates must be `YYYY-MM-DD`, a repeated date
+  keeps one row per day.
+- Release Race uses the real release date as Day 0; missing days stay missing.
+- Google sign-in: new account; password account refused by email then linked
+  from the menu; sign-in again after linking.
+- YouTube and SoundCloud connect, sync and disconnect with a real account.
+- A public report link shows only the report.
