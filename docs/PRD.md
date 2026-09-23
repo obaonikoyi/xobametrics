@@ -12,7 +12,8 @@
 >
 > The AI provider is also no longer the vendor's universal key; it is an
 > interface in `backend/ai_provider.py`. The "Emergent-managed Google login"
-> below has been replaced by a real Google sign-in in `backend/google_auth.py`. Read the code before trusting a line
+> below has been replaced by a real Google sign-in in `backend/google_auth.py`,
+> and the database is now PostgreSQL (`backend/schema.sql`), not MongoDB. Read the code before trusting a line
 > here.
 
 ## Original Problem Statement
