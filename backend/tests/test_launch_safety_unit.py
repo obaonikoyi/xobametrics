@@ -44,6 +44,14 @@ class SyncSafety(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await sync.sync_connection(conn), 0)
         self.assertEqual(conn['last_synced_at'], 'old')
 
+    def setUp(self):
+        # No live connections exist; the dispatcher may only read.
+        self.real_db = sync.db
+        sync.db = SimpleNamespace(find=AsyncMock(return_value=[]))
+
+    def tearDown(self):
+        sync.db = self.real_db
+
     async def test_profile_reports_no_sync(self):
         result = await sync.sync_profile('profile')
         self.assertIsNone(result['synced_at'])
@@ -52,41 +60,41 @@ class SyncSafety(unittest.IsolatedAsyncioTestCase):
 
     async def test_scheduled_job_is_safe_noop(self):
         self.assertEqual((await sync.run_daily_sync())['snapshots_created'], 0)
-        self.assertFalse(hasattr(sync, 'db'))
+        self.assertEqual(vars(sync.db).keys(), {'find'})
 
 
 class ConnectionSafety(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.connections = SimpleNamespace(find_one=AsyncMock(return_value={'id':'c'}), update_one=AsyncMock(), insert_one=AsyncMock())
+        self.connections = SimpleNamespace(find_one=AsyncMock(return_value={'id':'c'}), update=AsyncMock(), insert=AsyncMock())
         self.owned = AsyncMock(return_value={'id':'p'})
         self.fn = functions(BACKEND/'routes.py', ['_public_connection','create_connection','reconnect','sync_one_connection','sync_run'],
-                            db=SimpleNamespace(platform_connections=self.connections), _owned_profile=self.owned)
+                            db=self.connections, _owned_profile=self.owned)
 
     async def test_connect_is_explicitly_unavailable(self):
         with self.assertRaises(HTTPException) as error:
             await self.fn.create_connection(SimpleNamespace(profile_id='p'), {'user_id':'u'})
         self.assertEqual(error.exception.status_code, 501)
-        self.connections.insert_one.assert_not_awaited()
+        self.connections.insert.assert_not_awaited()
         self.owned.assert_awaited_once_with('p', {'user_id':'u'})
 
     async def test_reconnect_is_unavailable_without_write(self):
         with self.assertRaises(HTTPException) as error:
             await self.fn.reconnect('c', {'user_id':'u'})
         self.assertEqual(error.exception.status_code, 501)
-        self.connections.update_one.assert_not_awaited()
+        self.connections.update.assert_not_awaited()
 
     async def test_sync_is_unavailable_without_write(self):
         with self.assertRaises(HTTPException) as error:
             await self.fn.sync_one_connection('c', {'user_id':'u'})
         self.assertEqual(error.exception.status_code, 501)
-        self.connections.update_one.assert_not_awaited()
+        self.connections.update.assert_not_awaited()
 
     async def test_missing_or_foreign_connection_is_not_found(self):
         self.connections.find_one.return_value = None
         with self.assertRaises(HTTPException) as error:
             await self.fn.reconnect('foreign', {'user_id':'u'})
         self.assertEqual(error.exception.status_code, 404)
-        self.connections.find_one.assert_awaited_once_with({'id':'foreign','owner_id':'u'}, {'_id':0})
+        self.connections.find_one.assert_awaited_once_with('platform_connections', {'id':'foreign','owner_id':'u'})
 
     async def test_manual_profile_refresh_is_unavailable(self):
         with self.assertRaises(HTTPException) as error:
@@ -121,10 +129,10 @@ class InsightSafety(unittest.IsolatedAsyncioTestCase):
     async def test_facts_scope_is_checked_before_metric_reads(self):
         find = AsyncMock(return_value=None)
         analytics = SimpleNamespace(profile_overview=AsyncMock(), release_totals=AsyncMock())
-        fn = functions(BACKEND/'ai.py', ['_build_facts'], db=SimpleNamespace(releases=SimpleNamespace(find_one=find)), analytics=analytics)
+        fn = functions(BACKEND/'ai.py', ['_build_facts'], db=SimpleNamespace(find_one=find), analytics=analytics)
         with self.assertRaises(HTTPException):
             await fn._build_facts('mine','foreign')
-        find.assert_awaited_once_with({'id':'foreign','profile_id':'mine'}, {'_id':0})
+        find.assert_awaited_once_with('releases', {'id':'foreign','profile_id':'mine'})
         analytics.profile_overview.assert_not_awaited()
         analytics.release_totals.assert_not_awaited()
 
@@ -153,10 +161,10 @@ class CsvSafety(unittest.IsolatedAsyncioTestCase):
         rows = [{'date':'2026-09-01','views':str(i)} for i in range(row_count)]
         file = SimpleNamespace(filename='export.csv', read=AsyncMock(return_value=b'date,views\n'))
         request = SimpleNamespace(headers={'x-requested-with':'XobaMetrics'})
-        files = SimpleNamespace(insert_one=AsyncMock())
+        files = SimpleNamespace(insert=AsyncMock())
         parser = SimpleNamespace(parse_csv=Mock(return_value=(['date','views'], rows, {})), normalize_rows=Mock(return_value=rows))
         storage = SimpleNamespace(APP_NAME='test', put_object=Mock())
-        fn = functions(BACKEND/'routes.py', ['csv_upload'], db=SimpleNamespace(files=files), csv_import=parser,
+        fn = functions(BACKEND/'routes.py', ['csv_upload'], db=files, csv_import=parser,
                        storage=storage, uuid=__import__('uuid'), _owned_profile=AsyncMock(),
                        new_id=lambda _: 'file', now_iso=lambda:'now', MAX_UPLOAD_BYTES=5*1024*1024, MAX_IMPORT_ROWS=5000)
         return fn.csv_upload, request, file, rows, storage
@@ -187,17 +195,18 @@ class CsvSafety(unittest.IsolatedAsyncioTestCase):
 
 class HealthSafety(unittest.IsolatedAsyncioTestCase):
     async def test_health_is_not_a_claim_of_real_integration(self):
-        fn = functions(BACKEND/'server.py',['health'])
+        fn = functions(BACKEND/'server.py',['health'], youtube_configured=lambda: False,
+                       soundcloud_configured=lambda: False, google_signin_configured=lambda: False)
         self.assertFalse((await fn.health())['live_integrations_available'])
 
     async def test_readiness_checks_database(self):
-        command = AsyncMock(return_value={'ok':1})
-        fn = functions(BACKEND/'server.py',['ready'],db=SimpleNamespace(command=command),asyncio=asyncio)
+        fetchval = AsyncMock(return_value=1)
+        fn = functions(BACKEND/'server.py',['ready'],db=SimpleNamespace(fetchval=fetchval),asyncio=asyncio)
         self.assertEqual((await fn.ready())['status'],'ready')
-        command.assert_awaited_once_with('ping')
+        fetchval.assert_awaited_once_with('SELECT 1')
 
     async def test_readiness_does_not_leak_database_errors(self):
-        fn = functions(BACKEND/'server.py',['ready'],db=SimpleNamespace(command=AsyncMock(side_effect=RuntimeError('secret'))),asyncio=asyncio)
+        fn = functions(BACKEND/'server.py',['ready'],db=SimpleNamespace(fetchval=AsyncMock(side_effect=RuntimeError('secret'))),asyncio=asyncio)
         with self.assertRaises(HTTPException) as error:
             await fn.ready()
         self.assertEqual(error.exception.status_code,503)

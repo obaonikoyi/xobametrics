@@ -36,14 +36,11 @@ async def sync_connection(connection: dict, today=None) -> int:
 
 
 async def sync_profile(profile_id: str, today=None) -> dict:
-    connections = await db.platform_connections.find(
-        {
-            "profile_id": profile_id,
-            "status": "connected",
-            "platform": {"$in": sorted(LIVE_PLATFORMS)},
-        },
-        {"_id": 0},
-    ).to_list(100)
+    connections = await db.find("platform_connections", {
+        "profile_id": profile_id,
+        "status": "connected",
+        "platform": sorted(LIVE_PLATFORMS),
+    })
     snapshots = 0
     synced = 0
     for connection in connections:
@@ -68,13 +65,10 @@ async def sync_profile(profile_id: str, today=None) -> dict:
 
 async def run_daily_sync():
     """Refresh each profile that has at least one live connected adapter."""
-    connections = await db.platform_connections.find(
-        {
-            "status": "connected",
-            "platform": {"$in": sorted(LIVE_PLATFORMS)},
-        },
-        {"_id": 0},
-    ).to_list(100000)
+    connections = await db.find("platform_connections", {
+        "status": "connected",
+        "platform": sorted(LIVE_PLATFORMS),
+    })
     seen = set()
     profiles = 0
     snapshots = 0

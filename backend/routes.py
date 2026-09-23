@@ -23,20 +23,15 @@ import sync as sync_mod
 api_router = APIRouter(prefix="/api")
 
 
-def _clean(doc: dict) -> dict:
-    doc.pop("_id", None)
-    return doc
-
-
 async def _owned_profile(profile_id: str, user: dict) -> dict:
-    prof = await db.creator_profiles.find_one({"id": profile_id, "owner_id": user["user_id"]}, {"_id": 0})
+    prof = await db.find_one("creator_profiles", {"id": profile_id, "owner_id": user["user_id"]})
     if not prof:
         raise HTTPException(status_code=404, detail="Profile not found")
     return prof
 
 
 async def _owned_release(release_id: str, user: dict) -> dict:
-    rel = await db.releases.find_one({"id": release_id, "owner_id": user["user_id"]}, {"_id": 0})
+    rel = await db.find_one("releases", {"id": release_id, "owner_id": user["user_id"]})
     if not rel:
         raise HTTPException(status_code=404, detail="Release not found")
     return rel
@@ -98,22 +93,20 @@ def _match_key(a: str, b: str) -> str:
 # ---------- Workspaces & Profiles ----------
 @api_router.get("/workspaces")
 async def list_workspaces(user: dict = Depends(get_current_user)):
-    workspaces = await db.workspaces.find({"owner_id": user["user_id"]}, {"_id": 0}).to_list(100)
-    out = []
+    workspaces = await db.find("workspaces", {"owner_id": user["user_id"]}, order_by="created_at")
+    profiles = await db.find("creator_profiles", {"owner_id": user["user_id"]}, order_by="created_at")
     for ws in workspaces:
-        profiles = await db.creator_profiles.find({"workspace_id": ws["id"]}, {"_id": 0}).to_list(100)
-        ws["profiles"] = profiles
-        out.append(ws)
-    return {"workspaces": out}
+        ws["profiles"] = [p for p in profiles if p["workspace_id"] == ws["id"]]
+    return {"workspaces": workspaces}
 
 
 @api_router.post("/profiles")
 async def create_profile(body: ProfileCreate, user: dict = Depends(get_current_user)):
-    ws = await db.workspaces.find_one({"id": body.workspace_id, "owner_id": user["user_id"]}, {"_id": 0})
+    ws = await db.find_one("workspaces", {"id": body.workspace_id, "owner_id": user["user_id"]})
     if not ws:
         raise HTTPException(status_code=404, detail="Workspace not found")
     if ws.get("type") == "solo":
-        await db.workspaces.update_one({"id": ws["id"]}, {"$set": {"type": "manager"}})
+        await db.update("workspaces", {"id": ws["id"]}, {"type": "manager"})
     prof = {
         "id": new_id("prof"),
         "workspace_id": body.workspace_id,
@@ -123,8 +116,8 @@ async def create_profile(body: ProfileCreate, user: dict = Depends(get_current_u
         "avatar": body.avatar,
         "created_at": now_iso(),
     }
-    await db.creator_profiles.insert_one(prof)
-    return {"profile": _clean(prof)}
+    await db.insert("creator_profiles", prof)
+    return {"profile": prof}
 
 
 # ---------- Platform Connections ----------
@@ -142,7 +135,7 @@ def _public_connection(conn: dict) -> dict:
 @api_router.get("/connections")
 async def list_connections(profile_id: str, user: dict = Depends(get_current_user)):
     await _owned_profile(profile_id, user)
-    conns = await db.platform_connections.find({"profile_id": profile_id}, {"_id": 0}).to_list(100)
+    conns = await db.find("platform_connections", {"profile_id": profile_id})
     return {"connections": [_public_connection(c) for c in conns],
             "live_integrations_available": False,
             "message": sync_mod.INTEGRATION_MESSAGE}
@@ -156,7 +149,7 @@ async def create_connection(body: ConnectionCreate, user: dict = Depends(get_cur
 
 @api_router.post("/connections/{connection_id}/reconnect")
 async def reconnect(connection_id: str, user: dict = Depends(get_current_user)):
-    conn = await db.platform_connections.find_one({"id": connection_id, "owner_id": user["user_id"]}, {"_id": 0})
+    conn = await db.find_one("platform_connections", {"id": connection_id, "owner_id": user["user_id"]})
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
     raise HTTPException(status_code=501, detail=sync_mod.INTEGRATION_MESSAGE)
@@ -164,7 +157,7 @@ async def reconnect(connection_id: str, user: dict = Depends(get_current_user)):
 
 @api_router.post("/connections/{connection_id}/sync")
 async def sync_one_connection(connection_id: str, user: dict = Depends(get_current_user)):
-    conn = await db.platform_connections.find_one({"id": connection_id, "owner_id": user["user_id"]}, {"_id": 0})
+    conn = await db.find_one("platform_connections", {"id": connection_id, "owner_id": user["user_id"]})
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
     raise HTTPException(status_code=501, detail=sync_mod.INTEGRATION_MESSAGE)
@@ -180,17 +173,16 @@ async def sync_run(profile_id: str, user: dict = Depends(get_current_user)):
 @api_router.get("/releases")
 async def list_releases(profile_id: str, user: dict = Depends(get_current_user)):
     await _owned_profile(profile_id, user)
-    releases = await db.releases.find({"profile_id": profile_id}, {"_id": 0}).to_list(1000)
-    out = []
+    releases = await db.find("releases", {"profile_id": profile_id})
+    rollups = await analytics.profile_release_totals(profile_id)
     for r in releases:
-        rt = await analytics.release_totals(r["id"])
+        rt = rollups.get(r["id"]) or analytics.empty_release_totals()
         r["reach"] = rt["totals"]["reach"]
         r["engagement"] = rt["totals"]["engagement"]
         r["content_count"] = rt["content_count"]
         r["last_synced"] = rt["last_synced"]
-        out.append(r)
-    out.sort(key=lambda x: x["release_date"], reverse=True)
-    return {"releases": out}
+    releases.sort(key=lambda x: x["release_date"], reverse=True)
+    return {"releases": releases}
 
 
 @api_router.post("/releases")
@@ -207,8 +199,8 @@ async def create_release(body: ReleaseCreate, user: dict = Depends(get_current_u
         "description": body.description,
         "created_at": now_iso(),
     }
-    await db.releases.insert_one(rel)
-    return {"release": _clean(rel)}
+    await db.insert("releases", rel)
+    return {"release": rel}
 
 
 @api_router.patch("/releases/{release_id}")
@@ -220,10 +212,7 @@ async def update_release(release_id: str, body: ReleaseUpdate, user: dict = Depe
     if not changes:
         return {"release": await _owned_release(release_id, user)}
     changes["updated_at"] = now_iso()
-    await db.releases.update_one(
-        {"id": release_id, "owner_id": user["user_id"]},
-        {"$set": changes},
-    )
+    await db.update("releases", {"id": release_id, "owner_id": user["user_id"]}, changes)
     return {"release": await _owned_release(release_id, user)}
 
 
@@ -240,39 +229,17 @@ async def merge_releases(
     if not source_ids:
         raise HTTPException(status_code=400, detail="Select at least one other release to merge")
 
-    sources = await db.releases.find(
-        {
-            "id": {"$in": source_ids},
-            "owner_id": user["user_id"],
-            "profile_id": target["profile_id"],
-        },
-        {"_id": 0},
-    ).to_list(len(source_ids))
+    sources = await db.find("releases", {
+        "id": source_ids,
+        "owner_id": user["user_id"],
+        "profile_id": target["profile_id"],
+    })
     if len(sources) != len(source_ids):
         raise HTTPException(status_code=404, detail="One or more selected releases were not found")
 
-    content = await db.content_items.find(
-        {
-            "release_id": {"$in": source_ids},
-            "owner_id": user["user_id"],
-            "profile_id": target["profile_id"],
-        },
-        {"_id": 0, "id": 1},
-    ).to_list(10000)
-    content_ids = [item["id"] for item in content]
-
-    if content_ids:
-        await db.content_items.update_many(
-            {"id": {"$in": content_ids}, "owner_id": user["user_id"]},
-            {"$set": {"release_id": target_release_id}},
-        )
-        await db.metric_snapshots.update_many(
-            {"content_item_id": {"$in": content_ids}, "profile_id": target["profile_id"]},
-            {"$set": {"release_id": target_release_id}},
-        )
-
     changes = {
         "source": "organized",
+        "source_external_id": None,
         "updated_at": now_iso(),
     }
     if body.title is not None:
@@ -282,45 +249,56 @@ async def merge_releases(
     if body.description is not None:
         changes["description"] = body.description
 
-    await db.releases.update_one(
-        {"id": target_release_id, "owner_id": user["user_id"]},
-        {"$set": changes, "$unset": {"source_external_id": ""}},
-    )
-    await db.releases.delete_many(
-        {"id": {"$in": source_ids}, "owner_id": user["user_id"], "profile_id": target["profile_id"]}
-    )
+    # All or nothing: a failure part-way must not leave content split across
+    # a half-merged campaign.
+    async with db.transaction():
+        content_moved = await db.update(
+            "content_items",
+            {"release_id": source_ids, "owner_id": user["user_id"], "profile_id": target["profile_id"]},
+            {"release_id": target_release_id},
+        )
+        await db.execute(
+            """
+            UPDATE metric_snapshots s SET release_id = $1
+            FROM content_items c
+            WHERE c.id = s.content_item_id AND c.release_id = $1 AND s.release_id <> $1
+            """,
+            target_release_id,
+        )
+        await db.update("releases", {"id": target_release_id, "owner_id": user["user_id"]}, changes)
+        await db.delete("releases", {
+            "id": source_ids, "owner_id": user["user_id"], "profile_id": target["profile_id"],
+        })
 
     merged = await _owned_release(target_release_id, user)
     return {
         "release": merged,
         "merged_release_ids": source_ids,
-        "content_moved": len(content_ids),
-        "content_count": await db.content_items.count_documents({"release_id": target_release_id}),
+        "content_moved": content_moved,
+        "content_count": await db.count("content_items", {"release_id": target_release_id}),
     }
 
 
 @api_router.get("/release-match-suggestions")
 async def release_match_suggestions(profile_id: str, user: dict = Depends(get_current_user)):
     await _owned_profile(profile_id, user)
-    releases = await db.releases.find(
-        {"profile_id": profile_id, "owner_id": user["user_id"]}, {"_id": 0}
-    ).to_list(2000)
+    releases = await db.find("releases", {"profile_id": profile_id, "owner_id": user["user_id"]})
     if len(releases) < 2:
         return {"suggestions": []}
 
     release_ids = [r["id"] for r in releases]
-    content = await db.content_items.find(
-        {"release_id": {"$in": release_ids}, "owner_id": user["user_id"]},
-        {"_id": 0, "release_id": 1, "platform": 1},
-    ).to_list(20000)
+    content = await db.fetch(
+        "SELECT release_id, platform FROM content_items WHERE release_id = ANY($1) AND owner_id = $2",
+        release_ids, user["user_id"],
+    )
     platforms = {rid: set() for rid in release_ids}
     for item in content:
         if item.get("release_id") in platforms and item.get("platform"):
             platforms[item["release_id"]].add(item["platform"])
 
-    dismissed_docs = await db.release_match_dismissals.find(
-        {"profile_id": profile_id, "owner_id": user["user_id"]}, {"_id": 0, "match_key": 1}
-    ).to_list(10000)
+    dismissed_docs = await db.find(
+        "release_match_dismissals", {"profile_id": profile_id, "owner_id": user["user_id"]}
+    )
     dismissed = {d.get("match_key") for d in dismissed_docs}
 
     suggestions = []
@@ -385,24 +363,24 @@ async def dismiss_release_match(
     await _owned_profile(profile_id, user)
     if release_a == release_b:
         raise HTTPException(status_code=400, detail="A release cannot be matched with itself")
-    owned = await db.releases.count_documents({
-        "id": {"$in": [release_a, release_b]},
+    owned = await db.count("releases", {
+        "id": [release_a, release_b],
         "profile_id": profile_id,
         "owner_id": user["user_id"],
     })
     if owned != 2:
         raise HTTPException(status_code=404, detail="One or more releases were not found")
     key = _match_key(release_a, release_b)
-    await db.release_match_dismissals.update_one(
-        {"owner_id": user["user_id"], "profile_id": profile_id, "match_key": key},
-        {"$set": {
+    await db.upsert(
+        "release_match_dismissals",
+        {
             "owner_id": user["user_id"],
             "profile_id": profile_id,
             "match_key": key,
             "release_ids": sorted([release_a, release_b]),
             "dismissed_at": now_iso(),
-        }},
-        upsert=True,
+        },
+        conflict=("profile_id", "match_key"),
     )
     return {"ok": True, "match_key": key}
 
@@ -410,7 +388,7 @@ async def dismiss_release_match(
 @api_router.get("/releases/{release_id}")
 async def get_release(release_id: str, user: dict = Depends(get_current_user)):
     rel = await _owned_release(release_id, user)
-    content = await db.content_items.find({"release_id": release_id}, {"_id": 0}).to_list(1000)
+    content = await db.find("content_items", {"release_id": release_id}, order_by="created_at")
     latest = await analytics._latest_snapshots_by_content([c["id"] for c in content])
     for c in content:
         snap = latest.get(c["id"], {})
@@ -437,8 +415,8 @@ async def create_content(body: ContentCreate, user: dict = Depends(get_current_u
         "thumbnail": body.thumbnail,
         "created_at": now_iso(),
     }
-    await db.content_items.insert_one(ci)
-    return {"content": _clean(ci)}
+    await db.insert("content_items", ci)
+    return {"content": ci}
 
 
 # ---------- Analytics ----------
@@ -513,7 +491,7 @@ async def csv_upload(request: Request, file: UploadFile = File(...), profile_id:
         storage.put_object(path, raw, "text/csv")
     except Exception:
         path = None
-    await db.files.insert_one({
+    await db.insert("files", {
         "id": new_id("file"),
         "owner_id": user["user_id"],
         "profile_id": profile_id,
@@ -535,19 +513,32 @@ async def csv_commit(body: CsvCommitRequest, user: dict = Depends(get_current_us
     norm = csv_import.normalize_rows(body.rows, body.mapping)
     if not norm:
         raise HTTPException(status_code=400, detail="No valid rows found after normalization")
-    from datetime import date as _date
+    release_date = _release_date(body.release_date)
+    bad_dates = []
+    for rec in norm:
+        try:
+            _date.fromisoformat(rec["date"][:10])
+        except ValueError:
+            bad_dates.append(rec["date"])
+    if bad_dates:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{len(bad_dates)} row(s) have dates that are not YYYY-MM-DD "
+                f"(for example \"{bad_dates[0]}\"). Reformat the date column and try again."
+            ),
+        )
     release = {
         "id": new_id("rel"),
         "profile_id": body.profile_id,
         "workspace_id": prof["workspace_id"],
         "owner_id": user["user_id"],
         "title": body.release_title,
-        "release_date": body.release_date,
+        "release_date": release_date,
         "cover": "#3B82F6",
         "description": f"Imported from CSV ({body.platform}).",
         "created_at": now_iso(),
     }
-    await db.releases.insert_one(release)
     content = {
         "id": new_id("ci"),
         "release_id": release["id"],
@@ -558,20 +549,18 @@ async def csv_commit(body: CsvCommitRequest, user: dict = Depends(get_current_us
         "platform": body.platform,
         "content_type": body.content_type or "track",
         "url": None,
-        "published_at": body.release_date,
+        "published_at": release_date,
         "thumbnail": None,
         "created_at": now_iso(),
     }
-    await db.content_items.insert_one(content)
-    rel_date = _date.fromisoformat(body.release_date[:10])
+    rel_date = _date.fromisoformat(release_date)
     uses_plays = body.platform in analytics.PLAYS_PLATFORMS
-    snap_docs = []
+    # Keyed by day: a file that repeats a date keeps its last row, as the
+    # database allows one manual observation per item per day.
+    snap_docs = {}
     for rec in norm:
-        try:
-            d = _date.fromisoformat(rec["date"][:10])
-            offset = (d - rel_date).days
-        except Exception:
-            offset = None
+        d = _date.fromisoformat(rec["date"][:10])
+        offset = (d - rel_date).days
         views = rec.get("views", 0)
         plays = rec.get("plays", 0)
         if uses_plays and plays == 0 and views:
@@ -580,20 +569,23 @@ async def csv_commit(body: CsvCommitRequest, user: dict = Depends(get_current_us
         likes = rec.get("likes", 0)
         comments = rec.get("comments", 0)
         shares = rec.get("shares", 0)
-        snap_docs.append({
+        snap_docs[d] = {
             "id": new_id("snap"),
             "content_item_id": content["id"],
             "release_id": release["id"],
             "profile_id": body.profile_id,
-            "date": rec["date"],
+            "date": d,
             "day_offset": offset,
             "views": int(views), "plays": int(plays),
             "likes": int(likes), "comments": int(comments), "shares": int(shares),
             "reach": int(reach), "engagement": int(likes + comments + shares),
             "followers": int(rec.get("followers", 0)),
-        })
-    if snap_docs:
-        await db.metric_snapshots.insert_many(snap_docs)
+            "source": "manual",
+        }
+    async with db.transaction():
+        await db.insert("releases", release)
+        await db.insert("content_items", content)
+        await db.insert_many("metric_snapshots", list(snap_docs.values()))
     return {"release_id": release["id"], "snapshots": len(snap_docs)}
 
 
@@ -601,8 +593,7 @@ async def csv_commit(body: CsvCommitRequest, user: dict = Depends(get_current_us
 @api_router.get("/reports")
 async def list_reports(profile_id: str, user: dict = Depends(get_current_user)):
     await _owned_profile(profile_id, user)
-    reports = await db.reports.find({"profile_id": profile_id}, {"_id": 0}).to_list(200)
-    reports.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    reports = await db.find("reports", {"profile_id": profile_id}, order_by="created_at DESC")
     return {"reports": reports}
 
 
@@ -624,13 +615,13 @@ async def create_report(body: ReportCreate, user: dict = Depends(get_current_use
         "recommendations": insight.get("recommendations", []),
         "created_at": now_iso(),
     }
-    await db.reports.insert_one(report)
-    return {"report": _clean(report)}
+    await db.insert("reports", report)
+    return {"report": report}
 
 
 @api_router.get("/reports/{report_id}")
 async def get_report(report_id: str, user: dict = Depends(get_current_user)):
-    report = await db.reports.find_one({"id": report_id, "owner_id": user["user_id"]}, {"_id": 0})
+    report = await db.find_one("reports", {"id": report_id, "owner_id": user["user_id"]})
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
     return {"report": report}
@@ -638,7 +629,7 @@ async def get_report(report_id: str, user: dict = Depends(get_current_user)):
 
 @api_router.get("/reports/shared/{share_id}")
 async def get_shared_report(share_id: str):
-    report = await db.reports.find_one({"share_id": share_id}, {"_id": 0})
+    report = await db.find_one("reports", {"share_id": share_id})
     if not report:
         raise HTTPException(status_code=404, detail="Shared report not found")
     public = {k: report.get(k) for k in
@@ -650,8 +641,8 @@ async def get_shared_report(share_id: str):
 # ---------- Demo seeding ----------
 @api_router.post("/demo/seed")
 async def seed_demo_data(user: dict = Depends(get_current_user)):
-    ws = await db.workspaces.find_one({"owner_id": user["user_id"]}, {"_id": 0})
-    prof = await db.creator_profiles.find_one({"owner_id": user["user_id"]}, {"_id": 0})
+    ws = await db.find_one("workspaces", {"owner_id": user["user_id"]})
+    prof = await db.find_one("creator_profiles", {"owner_id": user["user_id"]})
     if not ws or not prof:
         raise HTTPException(status_code=400, detail="Workspace not initialized")
     result = await seed_mod.seed_demo(user["user_id"], ws["id"], prof["id"])

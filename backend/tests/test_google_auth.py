@@ -1,33 +1,26 @@
-"""Google sign-in, end to end against an in-memory database and a fake Google.
+"""Google sign-in, end to end against a real PostgreSQL database and a fake Google.
 
-No MongoDB, network or Google credentials: the token endpoint is stubbed and ID
-tokens are signed with a throwaway RSA key standing in for Google's.
+No network or Google credentials: the token endpoint is stubbed and ID tokens
+are signed with a throwaway RSA key standing in for Google's. Needs
+TEST_DATABASE_URL (see support.py).
 
 Execute with: python -m unittest discover -s backend/tests -p 'test_google_auth.py'
 """
 import os
-import sys
 import time
 import unittest
-from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-os.environ.setdefault("MONGO_URL", "mongodb://unused.invalid:27017")
-os.environ.setdefault("DB_NAME", "unused")
-os.environ["JWT_SECRET"] = "test-secret-that-is-long-enough-for-hs256"
 os.environ["GOOGLE_CLIENT_ID"] = "client-123.apps.googleusercontent.com"
 os.environ["GOOGLE_CLIENT_SECRET"] = "client-secret"
 os.environ["GOOGLE_REDIRECT_URI"] = "https://api.example.com/api/auth/google/callback"
 os.environ["FRONTEND_URL"] = "https://app.example.com"
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from support import ApiTestCase, requires_postgres  # noqa: E402
 
 import jwt  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: E402
-from fastapi import FastAPI  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
-from pymongo.errors import DuplicateKeyError  # noqa: E402
 
-import auth  # noqa: E402
 import google_auth  # noqa: E402
 
 GOOGLE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -35,62 +28,12 @@ OTHER_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 BROWSER_KEY = "b" * 64
 
 
-class FakeCollection:
-    def __init__(self, unique=()):
-        self.docs = []
-        self.unique = unique
-
-    @staticmethod
-    def _matches(doc, query):
-        return all(doc.get(k) == v for k, v in query.items())
-
-    def _check_unique(self, candidate, ignore=None):
-        for field in self.unique:
-            value = candidate.get(field)
-            if value is None:
-                continue
-            for doc in self.docs:
-                if doc is not ignore and doc.get(field) == value:
-                    raise DuplicateKeyError(f"duplicate {field}")
-
-    async def find_one(self, query, projection=None):
-        for doc in self.docs:
-            if self._matches(doc, query):
-                return dict(doc)
-        return None
-
-    async def insert_one(self, doc):
-        self._check_unique(doc)
-        self.docs.append(dict(doc))
-
-    async def update_one(self, query, update):
-        for doc in self.docs:
-            if self._matches(doc, query):
-                self._check_unique({**doc, **update["$set"]}, ignore=doc)
-                doc.update(update["$set"])
-                return
-
-    async def find_one_and_delete(self, query):
-        for doc in self.docs:
-            if self._matches(doc, query):
-                self.docs.remove(doc)
-                return dict(doc)
-        return None
-
-
-class FakeDb:
-    def __init__(self):
-        self.users = FakeCollection(unique=("email", "google_sub"))
-        self.oauth_states = FakeCollection(unique=("nonce",))
-        self.workspaces = FakeCollection()
-        self.creator_profiles = FakeCollection()
-
-
-class GoogleSignIn(unittest.TestCase):
+@requires_postgres
+class GoogleSignIn(ApiTestCase):
     def setUp(self):
-        self.db = FakeDb()
-        auth.db = self.db
-        google_auth.db = self.db
+        # Each test starts from empty tables.
+        self.sql("TRUNCATE users, oauth_states CASCADE")
+        self.client.cookies.clear()
         self.claims = {
             "sub": "google-sub-1",
             "email": "Artist@Example.com",
@@ -116,11 +59,6 @@ class GoogleSignIn(unittest.TestCase):
         google_auth._exchange_code = fake_exchange
         google_auth._signing_key = fake_signing_key
 
-        app = FastAPI()
-        app.include_router(auth.auth_router)
-        app.include_router(google_auth.router)
-        self.client = TestClient(app)
-
     def tearDown(self):
         google_auth._exchange_code, google_auth._signing_key = self._orig
 
@@ -137,10 +75,16 @@ class GoogleSignIn(unittest.TestCase):
         }
         return jwt.encode(payload, self.signing_key, algorithm="RS256")
 
-    def _start(self, mode="signin", headers=None):
+    def _states(self, type_="google_signin_state"):
+        return self.sql("SELECT * FROM oauth_states WHERE type = $1", type_)
+
+    def _users(self):
+        return self.sql("SELECT * FROM users ORDER BY created_at")
+
+    def _start(self, mode="signin", headers=None, invite_code=None):
         response = self.client.post(
             "/api/auth/google/start",
-            json={"browser_key": BROWSER_KEY, "mode": mode},
+            json={"browser_key": BROWSER_KEY, "mode": mode, "invite_code": invite_code},
             headers=headers or {},
         )
         self.assertEqual(response.status_code, 200, response.text)
@@ -177,7 +121,7 @@ class GoogleSignIn(unittest.TestCase):
         self.assertEqual(query["scope"], ["openid email profile"])
         self.assertEqual(query["code_challenge_method"], ["S256"])
         self.assertEqual(query["redirect_uri"], [os.environ["GOOGLE_REDIRECT_URI"]])
-        saved = self.db.oauth_states.docs[0]
+        saved = self._states()[0]
         self.assertEqual(query["code_challenge"], [google_auth._pkce_challenge(saved["code_verifier"])])
         self.assertNotEqual(saved["browser_key_hash"], BROWSER_KEY)
 
@@ -189,7 +133,8 @@ class GoogleSignIn(unittest.TestCase):
         self.assertEqual(body["user"]["email"], "artist@example.com")
         self.assertTrue(body["user"]["google_linked"])
         self.assertEqual(body["user"]["auth_provider"], "google")
-        self.assertEqual(len(self.db.workspaces.docs), 1)
+        self.assertEqual(len(self.sql("SELECT * FROM workspaces")), 1)
+        self.assertEqual(len(self.sql("SELECT * FROM creator_profiles")), 1)
         me = self.client.get("/api/auth/me", headers={"Authorization": f"Bearer {body['token']}"})
         self.assertEqual(me.json()["email"], "artist@example.com")
 
@@ -198,11 +143,11 @@ class GoogleSignIn(unittest.TestCase):
         self.claims["email"] = "renamed@example.com"
         body = self._exchange(self._sign_in()["code"]).json()
         self.assertEqual(body["user"]["email"], "artist@example.com")
-        self.assertEqual(len(self.db.users.docs), 1)
+        self.assertEqual(len(self._users()), 1)
 
     def test_code_verifier_is_sent_to_the_token_endpoint(self):
         query = self._start()
-        verifier = self.db.oauth_states.docs[0]["code_verifier"]
+        verifier = self._states()[0]["code_verifier"]
         self._callback(query["state"][0], code="the-code")
         self.assertEqual(self.exchanged, [("the-code", verifier)])
 
@@ -211,7 +156,7 @@ class GoogleSignIn(unittest.TestCase):
     def test_token_signed_by_another_key_is_refused(self):
         self.signing_key = OTHER_KEY
         self.assertEqual(self._sign_in(), {"error": "invalid_id_token"})
-        self.assertEqual(self.db.users.docs, [])
+        self.assertEqual(self._users(), [])
 
     def test_wrong_nonce_is_refused(self):
         self.nonce_override = "not-the-nonce"
@@ -250,7 +195,7 @@ class GoogleSignIn(unittest.TestCase):
 
     def test_expired_state_is_refused(self):
         state = self._start()["state"][0]
-        self.db.oauth_states.docs[0]["expires_at"] = "2000-01-01T00:00:00+00:00"
+        self.sql("UPDATE oauth_states SET expires_at = '2000-01-01T00:00:00+00:00'")
         self.assertEqual(self._callback(state), {"error": "sign_in_expired_or_already_used"})
 
     def test_google_denial_is_reported(self):
@@ -269,7 +214,7 @@ class GoogleSignIn(unittest.TestCase):
 
     def test_login_code_is_stored_hashed(self):
         code = self._sign_in()["code"]
-        self.assertFalse(any(d.get("nonce") == code for d in self.db.oauth_states.docs))
+        self.assertFalse(any(d["nonce"] == code for d in self.sql("SELECT nonce FROM oauth_states")))
 
     # --- accounts are never taken over by email -----------------------------
 
@@ -282,8 +227,7 @@ class GoogleSignIn(unittest.TestCase):
     def test_password_account_with_same_email_is_not_taken_over(self):
         self._register()
         self.assertEqual(self._sign_in(), {"error": "password_account_exists"})
-        user = self.db.users.docs[0]
-        self.assertNotIn("google_sub", user)
+        self.assertIsNone(self._users()[0]["google_sub"])
 
     def test_password_account_can_link_google_while_signed_in(self):
         token = self._register()
@@ -310,11 +254,26 @@ class GoogleSignIn(unittest.TestCase):
                          {"error": "google_account_used_by_another_user"})
 
     def test_passwordless_legacy_google_account_is_linked(self):
-        self.db.users.docs.append({"user_id": "user_legacy", "email": "artist@example.com",
-                                   "auth_provider": "google", "role": "user"})
+        self.sql("INSERT INTO users (user_id, email, auth_provider) VALUES ('user_legacy', 'artist@example.com', 'google')")
         body = self._exchange(self._sign_in()["code"]).json()
         self.assertEqual(body["user"]["user_id"], "user_legacy")
-        self.assertEqual(self.db.users.docs[0]["google_sub"], "google-sub-1")
+        self.assertEqual(self._users()[0]["google_sub"], "google-sub-1")
+
+    # --- invite-only beta -------------------------------------------------------
+
+    def test_new_google_account_needs_an_invite_when_codes_are_set(self):
+        os.environ["BETA_INVITE_CODES"] = "letmein"
+        try:
+            self.assertEqual(self._sign_in(), {"error": "invite_required"})
+            self.assertEqual(self._users(), [])
+            query = self._start(invite_code="letmein")
+            body = self._exchange(self._callback(query["state"][0])["code"]).json()
+            self.assertEqual(body["user"]["email"], "artist@example.com")
+            # Existing accounts sign in without a code.
+            again = self._exchange(self._sign_in()["code"])
+            self.assertEqual(again.status_code, 200)
+        finally:
+            del os.environ["BETA_INVITE_CODES"]
 
     # --- configuration --------------------------------------------------------
 

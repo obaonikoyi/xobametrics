@@ -10,10 +10,9 @@ from datetime import date, datetime, timedelta, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pymongo import UpdateOne
 
 from auth import get_current_user
-from database import db
+from database import NOT_NULL, db
 from models import new_id, now_iso
 from youtube import (
     YOUTUBE_ANALYTICS_SCOPE,
@@ -32,9 +31,9 @@ def _scope_granted(connection: dict | None) -> bool:
 
 
 async def _connection(profile_id: str, owner_id: str) -> dict | None:
-    return await db.platform_connections.find_one(
+    return await db.find_one(
+        "platform_connections",
         {"profile_id": profile_id, "owner_id": owner_id, "platform": "youtube"},
-        {"_id": 0},
     )
 
 
@@ -154,15 +153,12 @@ async def youtube_backfill_history(
             detail="Reconnect YouTube once to grant read-only YouTube Analytics history permission.",
         )
 
-    content_items = await db.content_items.find(
-        {
-            "profile_id": profile_id,
-            "owner_id": user["user_id"],
-            "platform": "youtube",
-            "external_id": {"$exists": True, "$ne": None},
-        },
-        {"_id": 0},
-    ).to_list(5000)
+    content_items = await db.find("content_items", {
+        "profile_id": profile_id,
+        "owner_id": user["user_id"],
+        "platform": "youtube",
+        "external_id": NOT_NULL,
+    })
     usable = [c for c in content_items if _published_date(c)]
     if not usable:
         return {
@@ -213,7 +209,7 @@ async def youtube_backfill_history(
             "followers": _safe_int(row.get("subscribersGained")),
         }
 
-    ops = []
+    snapshots = []
     now = now_iso()
     for video_id, day_rows in daily.items():
         if not day_rows:
@@ -248,44 +244,35 @@ async def youtube_backfill_history(
                 "history_first_observed_date": first_observed.isoformat(),
                 "observed_at": now,
             }
-            ops.append(
-                UpdateOne(
-                    {
-                        "content_item_id": content["id"],
-                        "date": d.isoformat(),
-                        "source": HISTORY_SOURCE,
-                    },
-                    {"$set": snapshot},
-                    upsert=True,
-                )
-            )
+            snapshots.append(snapshot)
             d += timedelta(days=1)
 
-    written = 0
-    for start in range(0, len(ops), 1000):
-        result = await db.metric_snapshots.bulk_write(ops[start:start + 1000], ordered=False)
-        written += int(result.upserted_count or 0) + int(result.modified_count or 0)
+    async with db.transaction():
+        for start in range(0, len(snapshots), 1000):
+            await db.upsert_many(
+                "metric_snapshots", snapshots[start:start + 1000],
+                conflict=("content_item_id", "date", "source"), keep=("id",),
+            )
 
     finished = now_iso()
-    await db.platform_connections.update_one(
+    await db.update(
+        "platform_connections",
         {"id": connection["id"]},
         {
-            "$set": {
-                "history_backfilled_at": finished,
-                "history_start_date": start_date.isoformat(),
-                "history_end_date": end_date.isoformat(),
-                "history_rows_received": len(rows),
-                "history_points_written": len(ops),
-                "history_last_error": None,
-            }
+            "history_backfilled_at": finished,
+            "history_start_date": start_date.isoformat(),
+            "history_end_date": end_date.isoformat(),
+            "history_rows_received": len(rows),
+            "history_points_written": len(snapshots),
+            "history_last_error": None,
         },
     )
     return {
         "status": "ok",
         "videos": len(usable),
         "rows_received": len(rows),
-        "history_points_written": len(ops),
-        "database_writes": written,
+        "history_points_written": len(snapshots),
+        "database_writes": len(snapshots),
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "backfilled_at": finished,

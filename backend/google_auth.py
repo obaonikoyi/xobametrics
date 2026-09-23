@@ -39,11 +39,11 @@ import httpx
 import jwt
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
+from asyncpg.exceptions import UniqueViolationError
 from pydantic import BaseModel, Field
-from pymongo.errors import DuplicateKeyError
 
 from auth import (
-    _ensure_workspace, _public_user, _set_cookie, create_access_token, get_current_user,
+    _ensure_workspace, _public_user, get_current_user, invite_code_valid, issue_session,
 )
 from database import db
 from models import new_id, now_iso
@@ -64,6 +64,7 @@ CODE_TTL = timedelta(minutes=2)
 class StartRequest(BaseModel):
     browser_key: str = Field(min_length=32, max_length=256)
     mode: Literal["signin", "link"] = "signin"
+    invite_code: str | None = Field(default=None, max_length=200)
 
 
 class ExchangeRequest(BaseModel):
@@ -180,17 +181,18 @@ async def _exchange_code(code: str, code_verifier: str) -> str:
     return id_token
 
 
-async def _resolve_user(claims: dict, mode: str, link_user_id: str | None) -> dict:
+async def _resolve_user(claims: dict, mode: str, link_user_id: str | None,
+                        invite_ok: bool = True) -> dict:
     sub = str(claims["sub"])
     email = str(claims["email"]).lower()
     name = claims.get("name")
     picture = claims.get("picture")
-    by_sub = await db.users.find_one({"google_sub": sub}, {"_id": 0})
+    by_sub = await db.find_one("users", {"google_sub": sub})
 
     if mode == "link":
         if by_sub and by_sub["user_id"] != link_user_id:
             raise SignInRefused("google_account_used_by_another_user")
-        user = await db.users.find_one({"user_id": link_user_id}, {"_id": 0})
+        user = await db.find_one("users", {"user_id": link_user_id})
         if not user:
             raise SignInRefused("account_not_found")
         if user.get("google_sub") and user["google_sub"] != sub:
@@ -199,19 +201,19 @@ async def _resolve_user(claims: dict, mode: str, link_user_id: str | None) -> di
         if picture and not user.get("picture"):
             update["picture"] = picture
         try:
-            await db.users.update_one({"user_id": user["user_id"]}, {"$set": update})
-        except DuplicateKeyError as exc:
+            await db.update("users", {"user_id": user["user_id"]}, update)
+        except UniqueViolationError as exc:
             raise SignInRefused("google_account_used_by_another_user") from exc
         user.update(update)
         return user
 
     if by_sub:
         if picture and picture != by_sub.get("picture"):
-            await db.users.update_one({"user_id": by_sub["user_id"]}, {"$set": {"picture": picture}})
+            await db.update("users", {"user_id": by_sub["user_id"]}, {"picture": picture})
             by_sub["picture"] = picture
         return by_sub
 
-    by_email = await db.users.find_one({"email": email}, {"_id": 0})
+    by_email = await db.find_one("users", {"email": email})
     if by_email:
         if by_email.get("password_hash"):
             raise SignInRefused("password_account_exists")
@@ -221,12 +223,14 @@ async def _resolve_user(claims: dict, mode: str, link_user_id: str | None) -> di
         if picture:
             update["picture"] = picture
         try:
-            await db.users.update_one({"user_id": by_email["user_id"]}, {"$set": update})
-        except DuplicateKeyError as exc:
+            await db.update("users", {"user_id": by_email["user_id"]}, update)
+        except UniqueViolationError as exc:
             raise SignInRefused("google_account_used_by_another_user") from exc
         by_email.update(update)
         return by_email
 
+    if not invite_ok:
+        raise SignInRefused("invite_required")
     user_id = new_id("user")
     user = {
         "user_id": user_id,
@@ -240,12 +244,12 @@ async def _resolve_user(claims: dict, mode: str, link_user_id: str | None) -> di
         "created_at": now_iso(),
     }
     try:
-        await db.users.insert_one(user)
-    except DuplicateKeyError as exc:
+        async with db.transaction():
+            await db.insert("users", user)
+            await _ensure_workspace(user_id, user["name"])
+    except UniqueViolationError as exc:
         # Another request created this email or Google id between our reads.
         raise SignInRefused("sign_in_conflict_try_again") from exc
-    user.pop("_id", None)
-    await _ensure_workspace(user_id, user["name"])
     return user
 
 
@@ -265,7 +269,7 @@ async def google_start(body: StartRequest, request: Request):
     state = secrets.token_urlsafe(32)
     oidc_nonce = secrets.token_urlsafe(32)
     code_verifier = secrets.token_urlsafe(64)
-    await db.oauth_states.insert_one({
+    await db.insert("oauth_states", {
         "nonce": state,
         "type": STATE_TYPE,
         "mode": body.mode,
@@ -273,6 +277,8 @@ async def google_start(body: StartRequest, request: Request):
         "browser_key_hash": _hash(body.browser_key),
         "oidc_nonce": oidc_nonce,
         "code_verifier": code_verifier,
+        # Checked now, used only if Google sign-in turns out to create an account.
+        "invite_ok": invite_code_valid(body.invite_code),
         "expires_at": (datetime.now(timezone.utc) + STATE_TTL).isoformat(),
         "created_at": now_iso(),
     })
@@ -301,7 +307,7 @@ async def google_callback(
     if not code or not state:
         return _landing(error="missing_oauth_response")
 
-    saved = await db.oauth_states.find_one_and_delete({"nonce": state, "type": STATE_TYPE})
+    saved = await db.take("oauth_states", {"nonce": state, "type": STATE_TYPE})
     if not saved:
         return _landing(error="sign_in_expired_or_already_used")
     if _expired(saved.get("expires_at")):
@@ -310,12 +316,14 @@ async def google_callback(
     try:
         id_token = await _exchange_code(code, saved["code_verifier"])
         claims = await _verify_id_token(id_token, saved["oidc_nonce"])
-        user = await _resolve_user(claims, saved["mode"], saved.get("user_id"))
+        user = await _resolve_user(
+            claims, saved["mode"], saved.get("user_id"), invite_ok=bool(saved.get("invite_ok"))
+        )
     except SignInRefused as refused:
         return _landing(error=refused.reason)
 
     login_code = secrets.token_urlsafe(32)
-    await db.oauth_states.insert_one({
+    await db.insert("oauth_states", {
         "nonce": _hash(login_code),
         "type": CODE_TYPE,
         "mode": saved["mode"],
@@ -329,7 +337,7 @@ async def google_callback(
 
 @router.post("/exchange")
 async def google_exchange(body: ExchangeRequest, response: Response):
-    saved = await db.oauth_states.find_one_and_delete({"nonce": _hash(body.code), "type": CODE_TYPE})
+    saved = await db.take("oauth_states", {"nonce": _hash(body.code), "type": CODE_TYPE})
     if (
         not saved
         or _expired(saved.get("expires_at"))
@@ -339,9 +347,8 @@ async def google_exchange(body: ExchangeRequest, response: Response):
             status_code=401,
             detail="This Google sign-in could not be completed. Start again from this browser tab.",
         )
-    user = await db.users.find_one({"user_id": saved["user_id"]}, {"_id": 0})
+    user = await db.find_one("users", {"user_id": saved["user_id"]})
     if not user:
         raise HTTPException(status_code=401, detail="Account not found")
-    token = create_access_token(user["user_id"], user["email"])
-    _set_cookie(response, "access_token", token, 7 * 24 * 3600)
+    token = await issue_session(response, user)
     return {"user": _public_user(user), "token": token, "mode": saved["mode"]}

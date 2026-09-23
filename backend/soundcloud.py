@@ -92,9 +92,7 @@ def _error_redirect(reason: str) -> RedirectResponse:
 
 
 async def _owned_profile(profile_id: str, owner_id: str) -> dict:
-    profile = await db.creator_profiles.find_one(
-        {"id": profile_id, "owner_id": owner_id}, {"_id": 0}
-    )
+    profile = await db.find_one("creator_profiles", {"id": profile_id, "owner_id": owner_id})
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
     return profile
@@ -109,9 +107,10 @@ def _token_expiry(data: dict) -> str:
 async def _refresh_access_token(connection: dict) -> tuple[str, dict]:
     refresh_token = _decrypt(connection.get("refresh_token_enc"))
     if not refresh_token:
-        await db.platform_connections.update_one(
+        await db.update(
+            "platform_connections",
             {"id": connection["id"]},
-            {"$set": {"status": "needs_reconnect", "last_error": "Missing SoundCloud refresh token"}},
+            {"status": "needs_reconnect", "last_error": "Missing SoundCloud refresh token"},
         )
         raise HTTPException(status_code=401, detail="Reconnect SoundCloud to continue syncing")
 
@@ -128,9 +127,10 @@ async def _refresh_access_token(connection: dict) -> tuple[str, dict]:
             headers={"Accept": "application/json"},
         )
     if response.status_code >= 400:
-        await db.platform_connections.update_one(
+        await db.update(
+            "platform_connections",
             {"id": connection["id"]},
-            {"$set": {"status": "needs_reconnect", "last_error": "SoundCloud token refresh failed"}},
+            {"status": "needs_reconnect", "last_error": "SoundCloud token refresh failed"},
         )
         raise HTTPException(status_code=401, detail="Reconnect SoundCloud to continue syncing")
 
@@ -148,7 +148,7 @@ async def _refresh_access_token(connection: dict) -> tuple[str, dict]:
     # the refresh response gives us a new one.
     if data.get("refresh_token"):
         update["refresh_token_enc"] = _encrypt(data["refresh_token"])
-    await db.platform_connections.update_one({"id": connection["id"]}, {"$set": update})
+    await db.update("platform_connections", {"id": connection["id"]}, update)
     connection.update(update)
     return access_token, connection
 
@@ -259,21 +259,21 @@ async def _upsert_track(profile: dict, owner_id: str, track: dict) -> tuple[bool
     artwork = track.get("artwork_url")
     publish_date = _track_date(track)
 
-    content = await db.content_items.find_one(
-        {"profile_id": profile["id"], "platform": "soundcloud", "external_id": urn},
-        {"_id": 0},
+    content = await db.find_one(
+        "content_items", {"profile_id": profile["id"], "platform": "soundcloud", "external_id": urn}
     )
     created_content = False
     if content:
-        await db.content_items.update_one(
+        await db.update(
+            "content_items",
             {"id": content["id"]},
-            {"$set": {
+            {
                 "title": title,
                 "url": permalink,
                 "thumbnail": artwork,
                 "published_at": track.get("created_at") or publish_date,
                 "soundcloud_urn": urn,
-            }},
+            },
         )
     else:
         release = {
@@ -289,7 +289,7 @@ async def _upsert_track(profile: dict, owner_id: str, track: dict) -> tuple[bool
             "source_external_id": urn,
             "created_at": now_iso(),
         }
-        await db.releases.insert_one(release)
+        await db.insert("releases", release)
         content = {
             "id": new_id("ci"),
             "release_id": release["id"],
@@ -306,7 +306,7 @@ async def _upsert_track(profile: dict, owner_id: str, track: dict) -> tuple[bool
             "soundcloud_urn": urn,
             "created_at": now_iso(),
         }
-        await db.content_items.insert_one(content)
+        await db.insert("content_items", content)
         created_content = True
 
     today = datetime.now(timezone.utc).date()
@@ -340,23 +340,17 @@ async def _upsert_track(profile: dict, owner_id: str, track: dict) -> tuple[bool
         "metric_semantics": "current_cumulative_track_counters",
         "observed_at": now_iso(),
     }
-    result = await db.metric_snapshots.update_one(
-        {
-            "content_item_id": content["id"],
-            "date": today.isoformat(),
-            "source": "soundcloud_api",
-        },
-        {"$set": snapshot},
-        upsert=True,
+    created_snapshot = await db.upsert(
+        "metric_snapshots", snapshot, conflict=("content_item_id", "date", "source"), keep=("id",)
     )
-    return created_content, bool(result.upserted_id)
+    return created_content, created_snapshot
 
 
 async def sync_soundcloud(profile_id: str, owner_id: str) -> dict:
     profile = await _owned_profile(profile_id, owner_id)
-    connection = await db.platform_connections.find_one(
+    connection = await db.find_one(
+        "platform_connections",
         {"profile_id": profile_id, "owner_id": owner_id, "platform": "soundcloud"},
-        {"_id": 0},
     )
     if not connection or connection.get("status") != "connected":
         raise HTTPException(status_code=400, detail="Connect SoundCloud before syncing")
@@ -380,9 +374,10 @@ async def sync_soundcloud(profile_id: str, owner_id: str) -> dict:
         snapshots += 1 if snap_created else 0
 
     now = now_iso()
-    await db.platform_connections.update_one(
+    await db.update(
+        "platform_connections",
         {"id": connection["id"]},
-        {"$set": {
+        {
             "status": "connected",
             "account_name": account.get("username"),
             "external_account_id": str(account.get("urn") or account.get("id") or ""),
@@ -393,7 +388,7 @@ async def sync_soundcloud(profile_id: str, owner_id: str) -> dict:
                 "followings_count": _safe_int(account.get("followings_count")),
                 "track_count": _safe_int(account.get("track_count")),
             },
-        }},
+        },
     )
     return {
         "account": account.get("username"),
@@ -407,9 +402,9 @@ async def sync_soundcloud(profile_id: str, owner_id: str) -> dict:
 @router.get("/status")
 async def soundcloud_status(profile_id: str = Query(...), user: dict = Depends(get_current_user)):
     await _owned_profile(profile_id, user["user_id"])
-    connection = await db.platform_connections.find_one(
+    connection = await db.find_one(
+        "platform_connections",
         {"profile_id": profile_id, "owner_id": user["user_id"], "platform": "soundcloud"},
-        {"_id": 0},
     )
     public = None
     if connection:
@@ -432,15 +427,18 @@ async def soundcloud_connect(profile_id: str = Query(...), user: dict = Depends(
     nonce = secrets.token_urlsafe(24)
     verifier = _pkce_verifier()
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
-    await db.oauth_states.insert_one({
-        "nonce": nonce,
-        "type": STATE_TYPE,
-        "owner_id": user["user_id"],
-        "profile_id": profile_id,
-        "pkce_verifier_enc": _encrypt(verifier),
-        "expires_at": expires_at.isoformat(),
-        "created_at": now_iso(),
-    })
+    await db.insert(
+        "oauth_states",
+        {
+            "nonce": nonce,
+            "type": STATE_TYPE,
+            "owner_id": user["user_id"],
+            "profile_id": profile_id,
+            "pkce_verifier_enc": _encrypt(verifier),
+            "expires_at": expires_at.isoformat(),
+            "created_at": now_iso(),
+        },
+    )
     state = jwt.encode(
         {
             "type": STATE_TYPE,
@@ -483,8 +481,9 @@ async def soundcloud_callback(
     except Exception:
         return _error_redirect("invalid_or_expired_state")
 
-    saved = await db.oauth_states.find_one_and_delete(
-        {"nonce": nonce, "type": STATE_TYPE, "owner_id": owner_id, "profile_id": profile_id}
+    saved = await db.take(
+        "oauth_states",
+        {"nonce": nonce, "type": STATE_TYPE, "owner_id": owner_id, "profile_id": profile_id},
     )
     if not saved:
         return _error_redirect("oauth_state_already_used_or_missing")
@@ -500,9 +499,7 @@ async def soundcloud_callback(
     except Exception:
         return _error_redirect("invalid_oauth_state")
 
-    profile = await db.creator_profiles.find_one(
-        {"id": profile_id, "owner_id": owner_id}, {"_id": 0}
-    )
+    profile = await db.find_one("creator_profiles", {"id": profile_id, "owner_id": owner_id})
     if not profile:
         return _error_redirect("profile_not_found")
 
@@ -533,9 +530,9 @@ async def soundcloud_callback(
     except Exception:
         return _error_redirect("account_lookup_failed")
 
-    existing = await db.platform_connections.find_one(
+    existing = await db.find_one(
+        "platform_connections",
         {"profile_id": profile_id, "owner_id": owner_id, "platform": "soundcloud"},
-        {"_id": 0},
     )
     connection_id = existing["id"] if existing else new_id("conn")
     update = {
@@ -555,9 +552,7 @@ async def soundcloud_callback(
         "connected_at": existing.get("connected_at") if existing else now_iso(),
         "last_error": None,
     }
-    await db.platform_connections.update_one(
-        {"id": connection_id}, {"$set": update}, upsert=True
-    )
+    await db.upsert("platform_connections", update, conflict=("profile_id", "platform"), keep=("id",))
     try:
         result = await sync_soundcloud(profile_id, owner_id)
         return RedirectResponse(
@@ -577,9 +572,9 @@ async def soundcloud_sync(profile_id: str = Query(...), user: dict = Depends(get
 @router.delete("/disconnect")
 async def soundcloud_disconnect(profile_id: str = Query(...), user: dict = Depends(get_current_user)):
     await _owned_profile(profile_id, user["user_id"])
-    connection = await db.platform_connections.find_one(
+    connection = await db.find_one(
+        "platform_connections",
         {"profile_id": profile_id, "owner_id": user["user_id"], "platform": "soundcloud"},
-        {"_id": 0},
     )
     if not connection:
         return {"ok": True}
@@ -594,15 +589,16 @@ async def soundcloud_disconnect(profile_id: str = Query(...), user: dict = Depen
                 )
         except Exception:
             pass
-    await db.platform_connections.update_one(
+    await db.update(
+        "platform_connections",
         {"id": connection["id"]},
         {
-            "$set": {"status": "needs_auth", "last_synced_at": None, "last_error": None},
-            "$unset": {
-                "access_token_enc": "",
-                "refresh_token_enc": "",
-                "access_token_expires_at": "",
-            },
+            "status": "needs_auth",
+            "last_synced_at": None,
+            "last_error": None,
+            "access_token_enc": None,
+            "refresh_token_enc": None,
+            "access_token_expires_at": None,
         },
     )
     return {"ok": True}
