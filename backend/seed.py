@@ -45,16 +45,17 @@ def _curve(total, day, age, rnd):
 
 
 async def seed_demo(owner_id: str, workspace_id: str, profile_id: str):
-    existing = await db.releases.find_one({"profile_id": profile_id}, {"_id": 0})
+    existing = await db.find_one("releases", {"profile_id": profile_id})
     if existing:
         return {"seeded": False, "reason": "already has data"}
 
     rnd = random.Random(42)
     today = date.today()
+    connections, releases, content_items, snap_docs = [], [], [], []
 
     # connections
     for platform, status, account, source in CONNECTIONS:
-        await db.platform_connections.insert_one({
+        connections.append({
             "id": new_id("conn"),
             "profile_id": profile_id,
             "workspace_id": workspace_id,
@@ -67,11 +68,10 @@ async def seed_demo(owner_id: str, workspace_id: str, profile_id: str):
             "last_synced_at": (now_iso() if status == "connected" else None),
         })
 
-    snap_docs = []
     for rel in RELEASES:
         release_date = today - timedelta(days=rel["days_ago"])
         release_id = new_id("rel")
-        await db.releases.insert_one({
+        releases.append({
             "id": release_id,
             "profile_id": profile_id,
             "workspace_id": workspace_id,
@@ -85,7 +85,7 @@ async def seed_demo(owner_id: str, workspace_id: str, profile_id: str):
         age = rel["days_ago"]
         for title, platform, ctype, total in rel["content"]:
             content_id = new_id("ci")
-            await db.content_items.insert_one({
+            content_items.append({
                 "id": content_id,
                 "release_id": release_id,
                 "profile_id": profile_id,
@@ -126,7 +126,15 @@ async def seed_demo(owner_id: str, workspace_id: str, profile_id: str):
                     "reach": reach,
                     "engagement": likes + comments + shares,
                     "followers": followers,
+                    "source": "manual",
                 })
-    if snap_docs:
-        await db.metric_snapshots.insert_many(snap_docs)
+    existing_platforms = {
+        c["platform"] for c in await db.find("platform_connections", {"profile_id": profile_id})
+    }
+    connections = [c for c in connections if c["platform"] not in existing_platforms]
+    async with db.transaction():
+        await db.insert_many("platform_connections", connections)
+        await db.insert_many("releases", releases)
+        await db.insert_many("content_items", content_items)
+        await db.insert_many("metric_snapshots", snap_docs)
     return {"seeded": True, "releases": len(RELEASES), "snapshots": len(snap_docs)}

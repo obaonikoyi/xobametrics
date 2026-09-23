@@ -44,7 +44,7 @@ def _fmt(n):
 async def _build_facts(profile_id: str, release_id=None) -> dict:
     rel = None
     if release_id:
-        rel = await db.releases.find_one({"id": release_id, "profile_id": profile_id}, {"_id": 0})
+        rel = await db.find_one("releases", {"id": release_id, "profile_id": profile_id})
         if not rel:
             raise HTTPException(status_code=404, detail="Release not found")
     overview = await analytics.profile_overview(profile_id)

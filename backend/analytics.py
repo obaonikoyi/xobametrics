@@ -1,4 +1,5 @@
-from datetime import date
+from fastapi import HTTPException
+
 from database import db
 
 # canonical metric keys stored on snapshots
@@ -34,93 +35,105 @@ PLAYS_PLATFORMS = {p for p, m in PLATFORM_META.items() if m["primary"] == "plays
 RACE_COLORS = ["#3B82F6", "#34D399", "#FBBF24", "#A78BFA", "#F43F5E", "#38BDF8"]
 
 
-def _parse_date(s: str) -> date:
-    return date.fromisoformat(str(s)[:10])
+# When one item has observations from several sources on the same day, the
+# most authoritative wins: completed-day Analytics history, then the live
+# YouTube counter, then everything else (CSV, SoundCloud, demo).
+_PRIORITY = (
+    "CASE s.source WHEN 'youtube_analytics_history' THEN 30 "
+    "WHEN 'youtube_api' THEN 20 ELSE 10 END"
+)
+
+# The newest observation per content item, after the same-day tie-break.
+_LATEST_SNAPSHOTS = f"""
+    SELECT DISTINCT ON (s.content_item_id) s.*
+    FROM metric_snapshots s
+    JOIN content_items c ON c.id = s.content_item_id
+    WHERE {{scope}}
+    ORDER BY s.content_item_id, s.date DESC, {_PRIORITY} DESC
+"""
+
+# One observation per content item per day, after the same-day tie-break.
+_DAILY_SNAPSHOTS = f"""
+    SELECT DISTINCT ON (s.content_item_id, s.date) s.*, c.release_id AS item_release_id
+    FROM metric_snapshots s
+    JOIN content_items c ON c.id = s.content_item_id
+    WHERE {{scope}}
+    ORDER BY s.content_item_id, s.date, {_PRIORITY} DESC
+"""
 
 
-async def _content_for_release(release_id: str):
-    return await db.content_items.find({"release_id": release_id}, {"_id": 0}).to_list(1000)
-
-
-def _snapshot_priority(snapshot: dict) -> int:
-    """Prefer authoritative completed-day history over ad-hoc same-day observations."""
-    source = snapshot.get("source")
-    if source == "youtube_analytics_history":
-        return 30
-    if source == "youtube_api":
-        return 20
-    return 10
-
-
-def _dedupe_snapshots_by_content_date(snaps):
-    chosen = {}
-    for s in snaps:
-        key = (s.get("content_item_id"), s.get("date"))
-        if not all(key):
-            continue
-        current = chosen.get(key)
-        if current is None or _snapshot_priority(s) > _snapshot_priority(current):
-            chosen[key] = s
-    return chosen
-
-
-async def _latest_snapshots_by_content(content_ids):
-    """Return the most recent snapshot per content item, de-duping same-day sources."""
-    if not content_ids:
-        return {}
-    snaps = await db.metric_snapshots.find(
-        {"content_item_id": {"$in": content_ids}}, {"_id": 0}
-    ).to_list(200000)
-    snaps = list(_dedupe_snapshots_by_content_date(snaps).values())
-    latest = {}
-    for s in snaps:
-        cid = s["content_item_id"]
-        if cid not in latest or s["date"] > latest[cid]["date"]:
-            latest[cid] = s
-        elif s["date"] == latest[cid]["date"] and _snapshot_priority(s) > _snapshot_priority(latest[cid]):
-            latest[cid] = s
-    return latest
+def _metric(metric: str) -> str:
+    if metric not in METRIC_KEYS:
+        raise HTTPException(status_code=422, detail=f"Unknown metric: {metric}")
+    return metric
 
 
 def _empty_totals():
     return {k: 0 for k in METRIC_KEYS}
 
 
-async def release_totals(release_id: str) -> dict:
-    content = await _content_for_release(release_id)
-    cids = [c["id"] for c in content]
-    latest = await _latest_snapshots_by_content(cids)
-    totals = _empty_totals()
-    per_platform = {}
-    last_synced = None
-    for c in content:
-        snap = latest.get(c["id"])
-        if not snap:
+def empty_release_totals() -> dict:
+    return {"totals": _empty_totals(), "per_platform": {}, "content_count": 0, "last_synced": None}
+
+
+async def _latest_snapshots_by_content(content_ids):
+    """Return the most recent snapshot per content item, de-duping same-day sources."""
+    if not content_ids:
+        return {}
+    rows = await db.fetch(
+        _LATEST_SNAPSHOTS.format(scope="s.content_item_id = ANY($1)"), list(content_ids)
+    )
+    return {r["content_item_id"]: r for r in rows}
+
+
+async def _rollups(scope: str, arg) -> dict:
+    """Totals per release from each content item's latest observation."""
+    rows = await db.fetch(
+        f"""
+        WITH latest AS ({_LATEST_SNAPSHOTS.format(scope=scope)})
+        SELECT c.release_id, c.platform, l.date AS snap_date,
+               {", ".join(f"l.{k}" for k in METRIC_KEYS)}
+        FROM content_items c
+        LEFT JOIN latest l ON l.content_item_id = c.id
+        WHERE {scope}
+        """,
+        arg,
+    )
+    out: dict = {}
+    for r in rows:
+        rt = out.setdefault(r["release_id"], empty_release_totals())
+        rt["content_count"] += 1
+        if r["snap_date"] is None:
             continue
-        plat = c["platform"]
-        per_platform.setdefault(plat, _empty_totals())
+        plat = rt["per_platform"].setdefault(r["platform"], _empty_totals())
         for k in METRIC_KEYS:
-            v = snap.get(k, 0) or 0
-            totals[k] += v
-            per_platform[plat][k] += v
-        if last_synced is None or snap["date"] > last_synced:
-            last_synced = snap["date"]
-    return {
-        "totals": totals,
-        "per_platform": per_platform,
-        "content_count": len(content),
-        "last_synced": last_synced,
-    }
+            v = r[k] or 0
+            rt["totals"][k] += v
+            plat[k] += v
+        if rt["last_synced"] is None or r["snap_date"] > rt["last_synced"]:
+            rt["last_synced"] = r["snap_date"]
+    return out
+
+
+async def release_totals(release_id: str) -> dict:
+    rollups = await _rollups("c.release_id = $1", release_id)
+    return rollups.get(release_id) or empty_release_totals()
+
+
+async def profile_release_totals(profile_id: str) -> dict:
+    """release_totals for every release of a profile, in one query."""
+    return await _rollups("c.profile_id = $1", profile_id)
 
 
 async def profile_overview(profile_id: str) -> dict:
-    releases = await db.releases.find({"profile_id": profile_id}, {"_id": 0}).to_list(1000)
+    releases = await db.find("releases", {"profile_id": profile_id})
+    rollups = await profile_release_totals(profile_id)
     grand = _empty_totals()
     per_platform = {}
     release_rows = []
     last_synced = None
     for r in releases:
-        rt = await release_totals(r["id"])
+        rt = rollups.get(r["id"]) or empty_release_totals()
         for k in METRIC_KEYS:
             grand[k] += rt["totals"][k]
         for plat, vals in rt["per_platform"].items():
@@ -157,48 +170,46 @@ async def profile_overview(profile_id: str) -> dict:
 
 
 async def release_timeseries(release_id: str, metric: str = "reach") -> dict:
-    content = await _content_for_release(release_id)
-    cids = [c["id"] for c in content]
-    snaps = await db.metric_snapshots.find(
-        {"content_item_id": {"$in": cids}}, {"_id": 0}
-    ).to_list(200000) if cids else []
-    by_date = {}
-    for s in _dedupe_snapshots_by_content_date(snaps).values():
-        d = s["date"]
-        by_date.setdefault(d, 0)
-        by_date[d] += s.get(metric, 0) or 0
-    series = [{"date": d, "value": by_date[d]} for d in sorted(by_date)]
-    return {"metric": metric, "series": series}
+    column = _metric(metric)
+    rows = await db.fetch(
+        f"""
+        WITH daily AS ({_DAILY_SNAPSHOTS.format(scope="c.release_id = $1")})
+        SELECT date, sum({column})::bigint AS value FROM daily GROUP BY date ORDER BY date
+        """,
+        release_id,
+    )
+    return {"metric": metric, "series": [{"date": r["date"], "value": r["value"]} for r in rows]}
 
 
 async def release_race(profile_id: str, release_ids, metric: str = "reach", max_day: int = 90) -> dict:
+    column = _metric(metric)
+    releases = {
+        r["id"]: r for r in await db.find("releases", {"id": list(release_ids), "profile_id": profile_id})
+    }
+    rows = await db.fetch(
+        f"""
+        WITH daily AS ({_DAILY_SNAPSHOTS.format(scope="c.release_id = ANY($1)")})
+        SELECT d.item_release_id AS release_id, (d.date - r.release_date) AS day,
+               sum(d.{column})::bigint AS value
+        FROM daily d JOIN releases r ON r.id = d.item_release_id
+        WHERE (d.date - r.release_date) BETWEEN 0 AND $2
+        GROUP BY 1, 2 ORDER BY 1, 2
+        """,
+        list(releases), int(max_day),
+    )
+    series: dict = {}
+    for r in rows:
+        series.setdefault(r["release_id"], []).append({"day": r["day"], "value": r["value"]})
     results = []
     for i, rid in enumerate(release_ids):
-        release = await db.releases.find_one({"id": rid, "profile_id": profile_id}, {"_id": 0})
+        release = releases.get(rid)
         if not release:
             continue
-        content = await _content_for_release(rid)
-        cids = [c["id"] for c in content]
-        snaps = await db.metric_snapshots.find(
-            {"content_item_id": {"$in": cids}}, {"_id": 0}
-        ).to_list(200000) if cids else []
-        by_offset = {}
-        release_day = _parse_date(release["release_date"])
-        for s in _dedupe_snapshots_by_content_date(snaps).values():
-            try:
-                off = (_parse_date(s["date"]) - release_day).days
-            except Exception:
-                off = s.get("day_offset")
-            if off is None or off < 0 or off > max_day:
-                continue
-            by_offset.setdefault(off, 0)
-            by_offset[off] += s.get(metric, 0) or 0
-        series = [{"day": off, "value": by_offset[off]} for off in sorted(by_offset)]
         results.append({
             "release_id": rid,
             "title": release["title"],
             "release_date": release["release_date"],
             "color": RACE_COLORS[i % len(RACE_COLORS)],
-            "series": series,
+            "series": series.get(rid, []),
         })
     return {"metric": metric, "max_day": max_day, "releases": results}

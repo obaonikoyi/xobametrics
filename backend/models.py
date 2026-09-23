@@ -15,8 +15,9 @@ def now_iso() -> str:
 # ---------- Auth ----------
 class RegisterRequest(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=6)
-    name: str = Field(min_length=1)
+    password: str = Field(min_length=8, max_length=256)
+    name: str = Field(min_length=1, max_length=120)
+    invite_code: Optional[str] = Field(default=None, max_length=200)
 
 
 class LoginRequest(BaseModel):

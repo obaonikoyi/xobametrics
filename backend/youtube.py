@@ -87,29 +87,30 @@ async def _background_history_backfill(profile_id: str, owner_id: str):
     try:
         from youtube_history import youtube_backfill_history
         await youtube_backfill_history(profile_id=profile_id, user={"user_id": owner_id})
-        await db.platform_connections.update_one(
+        await db.update(
+            "platform_connections",
             {"profile_id": profile_id, "owner_id": owner_id, "platform": "youtube"},
-            {"$set": {"history_last_error": None, "history_backfill_status": "complete"}},
+            {"history_last_error": None, "history_backfill_status": "complete"},
         )
     except HTTPException as exc:
-        await db.platform_connections.update_one(
+        await db.update(
+            "platform_connections",
             {"profile_id": profile_id, "owner_id": owner_id, "platform": "youtube"},
-            {"$set": {"history_last_error": str(exc.detail)[:300], "history_backfill_status": "error"}},
+            {"history_last_error": str(exc.detail)[:300], "history_backfill_status": "error"},
         )
     except Exception:
-        await db.platform_connections.update_one(
+        await db.update(
+            "platform_connections",
             {"profile_id": profile_id, "owner_id": owner_id, "platform": "youtube"},
-            {"$set": {
+            {
                 "history_last_error": "Historical Analytics import failed. Retry from Connections.",
                 "history_backfill_status": "error",
-            }},
+            },
         )
 
 
 async def _owned_profile(profile_id: str, user_id: str) -> dict:
-    profile = await db.creator_profiles.find_one(
-        {"id": profile_id, "owner_id": user_id}, {"_id": 0}
-    )
+    profile = await db.find_one("creator_profiles", {"id": profile_id, "owner_id": user_id})
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
     return profile
@@ -118,9 +119,10 @@ async def _owned_profile(profile_id: str, user_id: str) -> dict:
 async def _refresh_access_token(connection: dict) -> tuple[str, dict]:
     refresh_token = _decrypt(connection.get("refresh_token_enc"))
     if not refresh_token:
-        await db.platform_connections.update_one(
+        await db.update(
+            "platform_connections",
             {"id": connection["id"]},
-            {"$set": {"status": "needs_reconnect", "last_error": "Missing refresh token"}},
+            {"status": "needs_reconnect", "last_error": "Missing refresh token"},
         )
         raise HTTPException(status_code=401, detail="Reconnect YouTube to continue syncing")
 
@@ -133,9 +135,10 @@ async def _refresh_access_token(connection: dict) -> tuple[str, dict]:
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(TOKEN_URL, data=payload)
     if response.status_code >= 400:
-        await db.platform_connections.update_one(
+        await db.update(
+            "platform_connections",
             {"id": connection["id"]},
-            {"$set": {"status": "needs_reconnect", "last_error": "Google token refresh failed"}},
+            {"status": "needs_reconnect", "last_error": "Google token refresh failed"},
         )
         raise HTTPException(status_code=401, detail="Reconnect YouTube to continue syncing")
 
@@ -148,7 +151,7 @@ async def _refresh_access_token(connection: dict) -> tuple[str, dict]:
         "status": "connected",
         "last_error": None,
     }
-    await db.platform_connections.update_one({"id": connection["id"]}, {"$set": update})
+    await db.update("platform_connections", {"id": connection["id"]}, update)
     connection.update(update)
     return access_token, connection
 
@@ -256,20 +259,22 @@ async def _upsert_video(profile: dict, owner_id: str, channel_id: str, video: di
     published_at = snippet.get("publishedAt") or now_iso()
     publish_date = published_at[:10]
 
-    content = await db.content_items.find_one(
-        {"profile_id": profile["id"], "platform": "youtube", "external_id": video_id}, {"_id": 0}
+    content = await db.find_one(
+        "content_items",
+        {"profile_id": profile["id"], "platform": "youtube", "external_id": video_id},
     )
     created_content = False
     if content:
-        await db.content_items.update_one(
+        await db.update(
+            "content_items",
             {"id": content["id"]},
-            {"$set": {
+            {
                 "title": snippet.get("title") or content.get("title"),
                 "url": f"https://www.youtube.com/watch?v={video_id}",
                 "thumbnail": _thumb(snippet),
                 "published_at": published_at,
                 "channel_id": channel_id,
-            }},
+            },
         )
     else:
         release_id = new_id("rel")
@@ -287,7 +292,7 @@ async def _upsert_video(profile: dict, owner_id: str, channel_id: str, video: di
             "source_external_id": video_id,
             "created_at": now_iso(),
         }
-        await db.releases.insert_one(release)
+        await db.insert("releases", release)
         content = {
             "id": new_id("ci"),
             "release_id": release_id,
@@ -304,7 +309,7 @@ async def _upsert_video(profile: dict, owner_id: str, channel_id: str, video: di
             "channel_id": channel_id,
             "created_at": now_iso(),
         }
-        await db.content_items.insert_one(content)
+        await db.insert("content_items", content)
         created_content = True
 
     today = datetime.now(timezone.utc).date()
@@ -334,19 +339,17 @@ async def _upsert_video(profile: dict, owner_id: str, channel_id: str, video: di
         "unavailable_metrics": ["shares", "followers"],
         "observed_at": now_iso(),
     }
-    result = await db.metric_snapshots.update_one(
-        {"content_item_id": content["id"], "date": today.isoformat(), "source": "youtube_api"},
-        {"$set": snapshot},
-        upsert=True,
+    created_snapshot = await db.upsert(
+        "metric_snapshots", snapshot, conflict=("content_item_id", "date", "source"), keep=("id",)
     )
-    created_snapshot = bool(result.upserted_id)
     return created_content, created_snapshot
 
 
 async def sync_youtube(profile_id: str, owner_id: str) -> dict:
     profile = await _owned_profile(profile_id, owner_id)
-    connection = await db.platform_connections.find_one(
-        {"profile_id": profile_id, "owner_id": owner_id, "platform": "youtube"}, {"_id": 0}
+    connection = await db.find_one(
+        "platform_connections",
+        {"profile_id": profile_id, "owner_id": owner_id, "platform": "youtube"},
     )
     if not connection or connection.get("status") != "connected":
         raise HTTPException(status_code=400, detail="Connect YouTube before syncing")
@@ -378,9 +381,10 @@ async def sync_youtube(profile_id: str, owner_id: str) -> dict:
 
     channel_stats = channel.get("statistics", {})
     now = now_iso()
-    await db.platform_connections.update_one(
+    await db.update(
+        "platform_connections",
         {"id": connection["id"]},
-        {"$set": {
+        {
             "status": "connected",
             "account_name": channel.get("snippet", {}).get("title"),
             "external_account_id": channel["id"],
@@ -392,7 +396,7 @@ async def sync_youtube(profile_id: str, owner_id: str) -> dict:
                 "video_count": _int_stat(channel_stats, "videoCount"),
                 "hidden_subscriber_count": bool(channel_stats.get("hiddenSubscriberCount", False)),
             },
-        }},
+        },
     )
     return {
         "channel": channel.get("snippet", {}).get("title"),
@@ -407,8 +411,9 @@ async def sync_youtube(profile_id: str, owner_id: str) -> dict:
 @router.get("/status")
 async def youtube_status(profile_id: str = Query(...), user: dict = Depends(get_current_user)):
     await _owned_profile(profile_id, user["user_id"])
-    connection = await db.platform_connections.find_one(
-        {"profile_id": profile_id, "owner_id": user["user_id"], "platform": "youtube"}, {"_id": 0}
+    connection = await db.find_one(
+        "platform_connections",
+        {"profile_id": profile_id, "owner_id": user["user_id"], "platform": "youtube"},
     )
     public = None
     if connection:
@@ -430,14 +435,17 @@ async def youtube_connect(profile_id: str = Query(...), user: dict = Depends(get
     await _owned_profile(profile_id, user["user_id"])
     nonce = secrets.token_urlsafe(24)
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
-    await db.oauth_states.insert_one({
-        "nonce": nonce,
-        "type": STATE_TYPE,
-        "owner_id": user["user_id"],
-        "profile_id": profile_id,
-        "expires_at": expires_at.isoformat(),
-        "created_at": now_iso(),
-    })
+    await db.insert(
+        "oauth_states",
+        {
+            "nonce": nonce,
+            "type": STATE_TYPE,
+            "owner_id": user["user_id"],
+            "profile_id": profile_id,
+            "expires_at": expires_at.isoformat(),
+            "created_at": now_iso(),
+        },
+    )
     state = jwt.encode(
         {
             "type": STATE_TYPE,
@@ -483,8 +491,9 @@ async def youtube_callback(
     except Exception:
         return _oauth_error_redirect("invalid_or_expired_state")
 
-    saved = await db.oauth_states.find_one_and_delete(
-        {"nonce": nonce, "type": STATE_TYPE, "owner_id": owner_id, "profile_id": profile_id}
+    saved = await db.take(
+        "oauth_states",
+        {"nonce": nonce, "type": STATE_TYPE, "owner_id": owner_id, "profile_id": profile_id},
     )
     if not saved:
         return _oauth_error_redirect("oauth_state_already_used_or_missing")
@@ -497,9 +506,7 @@ async def youtube_callback(
     except Exception:
         return _oauth_error_redirect("invalid_oauth_state")
 
-    profile = await db.creator_profiles.find_one(
-        {"id": profile_id, "owner_id": owner_id}, {"_id": 0}
-    )
+    profile = await db.find_one("creator_profiles", {"id": profile_id, "owner_id": owner_id})
     if not profile:
         return _oauth_error_redirect("profile_not_found")
 
@@ -530,8 +537,9 @@ async def youtube_callback(
     except Exception:
         return _oauth_error_redirect("channel_lookup_failed")
 
-    existing = await db.platform_connections.find_one(
-        {"profile_id": profile_id, "owner_id": owner_id, "platform": "youtube"}, {"_id": 0}
+    existing = await db.find_one(
+        "platform_connections",
+        {"profile_id": profile_id, "owner_id": owner_id, "platform": "youtube"},
     )
     connection_id = existing["id"] if existing else new_id("conn")
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(tokens.get("expires_in", 3600)))
@@ -558,17 +566,16 @@ async def youtube_callback(
     else:
         return _oauth_error_redirect("missing_refresh_token_retry_consent")
 
-    await db.platform_connections.update_one(
-        {"id": connection_id}, {"$set": update}, upsert=True
-    )
+    await db.upsert("platform_connections", update, conflict=("profile_id", "platform"), keep=("id",))
     try:
         result = await sync_youtube(profile_id, owner_id)
         imported = result["content_imported"]
         seen = result["videos_seen"]
         if YOUTUBE_ANALYTICS_SCOPE in granted:
-            await db.platform_connections.update_one(
+            await db.update(
+                "platform_connections",
                 {"profile_id": profile_id, "owner_id": owner_id, "platform": "youtube"},
-                {"$set": {"history_backfill_status": "running", "history_last_error": None}},
+                {"history_backfill_status": "running", "history_last_error": None},
             )
             background_tasks.add_task(_background_history_backfill, profile_id, owner_id)
         return RedirectResponse(
@@ -588,8 +595,9 @@ async def youtube_sync(profile_id: str = Query(...), user: dict = Depends(get_cu
 @router.delete("/disconnect")
 async def youtube_disconnect(profile_id: str = Query(...), user: dict = Depends(get_current_user)):
     await _owned_profile(profile_id, user["user_id"])
-    connection = await db.platform_connections.find_one(
-        {"profile_id": profile_id, "owner_id": user["user_id"], "platform": "youtube"}, {"_id": 0}
+    connection = await db.find_one(
+        "platform_connections",
+        {"profile_id": profile_id, "owner_id": user["user_id"], "platform": "youtube"},
     )
     if not connection:
         return {"ok": True}
@@ -600,16 +608,16 @@ async def youtube_disconnect(profile_id: str = Query(...), user: dict = Depends(
                 await client.post(REVOKE_URL, params={"token": token})
         except Exception:
             pass
-    await db.platform_connections.update_one(
+    await db.update(
+        "platform_connections",
         {"id": connection["id"]},
-        {"$set": {
+        {
             "status": "needs_auth",
             "last_synced_at": None,
             "last_error": None,
-        }, "$unset": {
-            "access_token_enc": "",
-            "refresh_token_enc": "",
-            "access_token_expires_at": "",
-        }},
+            "access_token_enc": None,
+            "refresh_token_enc": None,
+            "access_token_expires_at": None,
+        },
     )
     return {"ok": True}
