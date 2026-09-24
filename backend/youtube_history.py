@@ -4,7 +4,8 @@ YouTube Data API snapshots provide current cumulative counts. The YouTube
 Analytics API provides dated activity, which we convert to cumulative
 observations aligned to each video's real publish date for Release Race.
 
-We deliberately do not invent data before the first Analytics observation.
+Days YouTube leaves out after publication had no activity; days it has not
+processed yet are left out rather than guessed.
 """
 from datetime import date, datetime, timedelta, timezone
 
@@ -143,7 +144,7 @@ async def youtube_backfill_history(
     profile_id: str = Query(...),
     user: dict = Depends(get_current_user),
 ):
-    profile = await _owned_profile(profile_id, user["user_id"])
+    await _owned_profile(profile_id, user["user_id"])
     connection = await _connection(profile_id, user["user_id"])
     if not connection or connection.get("status") != "connected":
         raise HTTPException(status_code=400, detail="Connect YouTube before importing history")
@@ -152,14 +153,50 @@ async def youtube_backfill_history(
             status_code=409,
             detail="Reconnect YouTube once to grant read-only YouTube Analytics history permission.",
         )
+    return await backfill_history(profile_id, user["user_id"], connection)
 
+
+def _cumulative_series(published: date, day_rows: dict[date, dict], through: date):
+    """
+    Cumulative totals for every day from the publish date to `through`.
+
+    YouTube Analytics leaves out days with no activity, so a missing day after
+    publication is a real zero, and the series starts at Day 0 even when the
+    first views came later. Analytics days are Pacific time while the publish
+    date is UTC, so activity dated before it (at most a day) belongs to Day 0.
+    """
+    cumulative = {"views": 0, "likes": 0, "comments": 0, "shares": 0, "followers": 0}
+    for d, row in day_rows.items():
+        if d < published:
+            for key in cumulative:
+                cumulative[key] += row[key]
+    d = published
+    while d <= through:
+        row = day_rows.get(d)
+        if row:
+            for key in cumulative:
+                cumulative[key] += row[key]
+        yield d, dict(cumulative)
+        d += timedelta(days=1)
+
+
+async def backfill_history(profile_id: str, owner_id: str, connection: dict, published_since: date | None = None) -> dict:
+    """
+    Import daily YouTube Analytics history as cumulative snapshots.
+
+    `published_since` limits the import to recent videos; the daily sync uses
+    it so a new release gets its Day 0 once YouTube has processed the data.
+    """
     content_items = await db.find("content_items", {
         "profile_id": profile_id,
-        "owner_id": user["user_id"],
+        "owner_id": owner_id,
         "platform": "youtube",
         "external_id": NOT_NULL,
     })
-    usable = [c for c in content_items if _published_date(c)]
+    usable = [
+        c for c in content_items
+        if _published_date(c) and (published_since is None or _published_date(c) >= published_since)
+    ]
     if not usable:
         return {
             "status": "ok",
@@ -169,11 +206,12 @@ async def youtube_backfill_history(
             "message": "No imported YouTube videos were available for history backfill.",
         }
 
-    start_date = min(_published_date(c) for c in usable)
+    # Pacific-time Analytics days can start a day before the UTC publish date.
+    start_date = min(_published_date(c) for c in usable) - timedelta(days=1)
     # Analytics data can lag behind public counters; keep the current UTC day
     # exclusively for the normal Data API snapshot path.
     end_date = datetime.now(timezone.utc).date() - timedelta(days=1)
-    if start_date > end_date:
+    if start_date >= end_date:
         return {
             "status": "ok",
             "videos": len(usable),
@@ -209,45 +247,45 @@ async def youtube_backfill_history(
             "followers": _safe_int(row.get("subscribersGained")),
         }
 
+    # YouTube processes Analytics a day or more behind. Days after the latest
+    # one it has reported for any video are unknown, not zero, and would
+    # otherwise outrank the live counters for those days.
+    reported_through = max((d for day_rows in daily.values() for d in day_rows), default=None)
+
     snapshots = []
     now = now_iso()
     for video_id, day_rows in daily.items():
-        if not day_rows:
-            continue
         content = content_by_video[video_id]
         published = _published_date(content)
-        first_observed = max(published, min(day_rows))
-        cumulative = {"views": 0, "likes": 0, "comments": 0, "shares": 0, "followers": 0}
-        d = first_observed
-        while d <= end_date:
-            row = day_rows.get(d)
-            if row:
-                for key in cumulative:
-                    cumulative[key] += row[key]
-            snapshot = {
+        for d, totals in _cumulative_series(published, day_rows, reported_through):
+            snapshots.append({
                 "id": new_id("snap"),
                 "content_item_id": content["id"],
                 "release_id": content["release_id"],
                 "profile_id": profile_id,
                 "date": d.isoformat(),
-                "day_offset": max(0, (d - published).days),
-                "views": cumulative["views"],
+                "day_offset": (d - published).days,
+                "views": totals["views"],
                 "plays": 0,
-                "likes": cumulative["likes"],
-                "comments": cumulative["comments"],
-                "shares": cumulative["shares"],
-                "followers": cumulative["followers"],
-                "reach": cumulative["views"],
-                "engagement": cumulative["likes"] + cumulative["comments"] + cumulative["shares"],
+                "likes": totals["likes"],
+                "comments": totals["comments"],
+                "shares": totals["shares"],
+                "followers": totals["followers"],
+                "reach": totals["views"],
+                "engagement": totals["likes"] + totals["comments"] + totals["shares"],
                 "source": HISTORY_SOURCE,
                 "metric_semantics": "cumulative_from_daily_youtube_analytics_activity",
-                "history_first_observed_date": first_observed.isoformat(),
+                "history_first_observed_date": min(day_rows).isoformat(),
                 "observed_at": now,
-            }
-            snapshots.append(snapshot)
-            d += timedelta(days=1)
+            })
 
     async with db.transaction():
+        if reported_through is not None:
+            # Earlier imports carried totals past what YouTube had reported.
+            await db.execute(
+                "DELETE FROM metric_snapshots WHERE source = $1 AND content_item_id = ANY($2) AND date > $3",
+                HISTORY_SOURCE, [c["id"] for c in usable], reported_through,
+            )
         for start in range(0, len(snapshots), 1000):
             await db.upsert_many(
                 "metric_snapshots", snapshots[start:start + 1000],
@@ -255,18 +293,19 @@ async def youtube_backfill_history(
             )
 
     finished = now_iso()
-    await db.update(
-        "platform_connections",
-        {"id": connection["id"]},
-        {
-            "history_backfilled_at": finished,
-            "history_start_date": start_date.isoformat(),
-            "history_end_date": end_date.isoformat(),
-            "history_rows_received": len(rows),
-            "history_points_written": len(snapshots),
-            "history_last_error": None,
-        },
-    )
+    if published_since is None:
+        await db.update(
+            "platform_connections",
+            {"id": connection["id"]},
+            {
+                "history_backfilled_at": finished,
+                "history_start_date": start_date.isoformat(),
+                "history_end_date": end_date.isoformat(),
+                "history_rows_received": len(rows),
+                "history_points_written": len(snapshots),
+                "history_last_error": None,
+            },
+        )
     return {
         "status": "ok",
         "videos": len(usable),
