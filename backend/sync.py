@@ -4,12 +4,13 @@ Only adapters that retrieve real platform data belong here. Synthetic growth is
 forbidden. YouTube and SoundCloud are the currently implemented adapters.
 """
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from database import db
 
 logger = logging.getLogger("xobametrics.sync")
 LIVE_PLATFORMS = {"youtube", "soundcloud"}
+RECENT_HISTORY_DAYS = 35
 INTEGRATION_MESSAGE = (
     "This platform does not have a live sync adapter yet. Upload a CSV export instead."
 )
@@ -27,12 +28,31 @@ async def sync_connection(connection: dict, today=None) -> int:
     if platform == "youtube":
         from youtube import sync_youtube
         result = await sync_youtube(connection["profile_id"], connection["owner_id"])
+        await _refresh_recent_youtube_history(connection)
     elif platform == "soundcloud":
         from soundcloud import sync_soundcloud
         result = await sync_soundcloud(connection["profile_id"], connection["owner_id"])
     else:
         return 0
     return int(result.get("snapshots_created", 0))
+
+
+async def _refresh_recent_youtube_history(connection: dict) -> None:
+    """
+    Re-import Analytics history for videos from the last few weeks.
+
+    YouTube reports a day's Analytics a day or more late, so a release synced
+    for the first time after its publish date only gets its Day 0 and early
+    days from here.
+    """
+    from youtube_history import _scope_granted, backfill_history
+    if not _scope_granted(connection):
+        return
+    since = datetime.now(timezone.utc).date() - timedelta(days=RECENT_HISTORY_DAYS)
+    try:
+        await backfill_history(connection["profile_id"], connection["owner_id"], connection, published_since=since)
+    except Exception as exc:
+        logger.error("YouTube history refresh failed for connection %s: %s", connection.get("id"), exc)
 
 
 async def sync_profile(profile_id: str, today=None) -> dict:

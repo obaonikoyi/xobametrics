@@ -627,6 +627,65 @@ class PlatformOAuthFlows(ApiTestCase):
                         "WHERE profile_id = $1", profile)[0]
         self.assertEqual(conn, {"status": "needs_auth", "access_token_enc": None, "refresh_token_enc": None})
 
+    def test_youtube_history_starts_at_day_zero(self):
+        import sync
+        import youtube
+        today = date.today()
+        published = today - timedelta(days=6)
+        day = lambda n: (published + timedelta(days=n)).isoformat()
+        analytics_rows = [
+            # Pacific-time day before the UTC publish date: belongs to Day 0.
+            [day(-1), "v1", 2, 0, 0, 0, 0],
+            # Nothing reported for Days 0-2, then activity on Day 3.
+            [day(3), "v1", 5, 1, 0, 0, 0],
+        ]
+        analytics_calls = []
+
+        def analytics(kw):
+            analytics_calls.append(kw["params"])
+            return 200, {"columnHeaders": [{"name": n} for n in (
+                "day", "video", "views", "likes", "comments", "shares", "subscribersGained")],
+                "rows": analytics_rows}
+
+        FakePlatform.routes = {
+            youtube.TOKEN_URL: lambda kw: (200, {
+                "access_token": "yt-access", "refresh_token": "yt-refresh", "expires_in": 3600,
+                "scope": f"{youtube.YOUTUBE_READ_SCOPE} {youtube.YOUTUBE_ANALYTICS_SCOPE}"}),
+            f"{youtube.YOUTUBE_API}/channels": lambda kw: (200, {"items": [{
+                "id": "chan1", "snippet": {"title": "Luna"},
+                "contentDetails": {"relatedPlaylists": {"uploads": "UU1"}},
+                "statistics": {"viewCount": "7", "subscriberCount": "5", "videoCount": "1"}}]}),
+            f"{youtube.YOUTUBE_API}/playlistItems": lambda kw: (200, {"items": [{"contentDetails": {"videoId": "v1"}}]}),
+            f"{youtube.YOUTUBE_API}/videos": lambda kw: (200, {"items": [
+                {"id": "v1", "snippet": {"title": "Late starter", "publishedAt": f"{day(0)}T03:00:00Z"},
+                 "statistics": {"viewCount": "7", "likeCount": "1", "commentCount": "0"}}]}),
+            "https://youtubeanalytics.googleapis.com": analytics,
+        }
+        body = self.register("youtube-day-zero@example.com")
+        token, profile = body["token"], self.profile_id(body["token"])
+        self.callback("youtube", self.connect("youtube", token, profile))
+        release = self.sql("SELECT release_id, id FROM content_items WHERE profile_id = $1", profile)[0]
+
+        # A day an older import carried forward past what YouTube had reported.
+        self.sql("INSERT INTO metric_snapshots (id, content_item_id, release_id, profile_id, date, views, reach, source) "
+                 "VALUES ('stale', $1, $2, $3, $4, 7, 7, 'youtube_analytics_history')",
+                 release["id"], release["release_id"], profile, date.fromisoformat(day(5)))
+        imported = self.client.post(f"/api/youtube/backfill-history?profile_id={profile}", headers=self.auth(token))
+        self.assertEqual(imported.status_code, 200, imported.text)
+
+        history = self.sql("SELECT date, views FROM metric_snapshots WHERE profile_id = $1 "
+                           "AND source = 'youtube_analytics_history' ORDER BY date", profile)
+        self.assertEqual(history, [{"date": day(0), "views": 2}, {"date": day(1), "views": 2},
+                                   {"date": day(2), "views": 2}, {"date": day(3), "views": 7}])
+        race = self.client.get(f"/api/analytics/release-race?profile_id={profile}&release_ids={release['release_id']}"
+                               f"&metric=views&max_day=3", headers=self.auth(token)).json()
+        self.assertEqual([p["day"] for p in race["releases"][0]["series"]], [0, 1, 2, 3])
+
+        # The daily sync re-imports history for recent releases.
+        analytics_calls.clear()
+        self.run_db(sync.sync_profile, profile)
+        self.assertEqual(len(analytics_calls), 1)
+
     def test_soundcloud(self):
         import soundcloud
         FakePlatform.routes = {
