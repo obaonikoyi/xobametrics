@@ -78,7 +78,8 @@ Names and notes are in `backend/.env.example`. Store values only in Railway.
 - `FRONTEND_URL=https://xobametrics.com`
 - `CORS_ORIGINS=https://xobametrics.com,https://metrics.3xoba.com` (never `*`)
 - `PUBLIC_API_URL=https://api.xobametrics.com`
-- `OPENAI_API_KEY`, `AI_MODEL` — a model your key can call
+- `ANTHROPIC_API_KEY` for the AI panel (Claude; key from console.anthropic.com).
+  `AI_MODEL` is optional and overrides the default model
 - `BETA_INVITE_CODES` — comma-separated; empty means open sign-up
 - OAuth: `GOOGLE_*`, `YOUTUBE_*`, `SOUNDCLOUD_*` (redirect URIs on
   `https://api.xobametrics.com/...`, registered identically with each provider)

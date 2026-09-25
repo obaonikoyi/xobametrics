@@ -17,7 +17,7 @@ from typing import Protocol
 class AiProvider(Protocol):
     """Anything that can answer a prompt with text."""
 
-    async def complete(self, system_prompt: str, user_message: str) -> str: ...
+    async def complete(self, system_prompt: str, user_message: str, schema: dict | None = None) -> str: ...
 
 
 class NotConfiguredProvider:
@@ -31,21 +31,23 @@ class NotConfiguredProvider:
 
     configured = False
 
-    async def complete(self, system_prompt: str, user_message: str) -> str:
+    async def complete(self, system_prompt: str, user_message: str, schema: dict | None = None) -> str:
         raise RuntimeError(
             "AI insights are not configured yet. Your stored analytics are still available."
         )
 
 
-class OpenAiProvider:
-    """
-    The OpenAI chat completions API, called directly.
+class AiRefused(Exception):
+    """The model declined the request, even after its fallback."""
 
-    Stateless on purpose. The previous wrapper kept a server-side session per
-    conversation; nothing here needs it, because every request already carries
-    the full backend-computed facts and the grounding rules. Sending the whole
-    context each time is what makes the answer reproducible from the request
-    alone.
+
+class ClaudeProvider:
+    """
+    Claude, through the Anthropic API.
+
+    Stateless on purpose: every request carries the full backend-computed facts
+    and the grounding rules, so an answer is reproducible from the request
+    alone. `schema`, when given, makes the reply JSON matching it.
     """
 
     configured = True
@@ -53,33 +55,39 @@ class OpenAiProvider:
     def __init__(self, api_key: str, model: str):
         # Imported here so the module loads for callers that never use it --
         # a missing optional dependency should not break application start-up.
-        from openai import AsyncOpenAI
+        from anthropic import AsyncAnthropic
 
-        self._client = AsyncOpenAI(api_key=api_key)
+        self._client = AsyncAnthropic(api_key=api_key)
         self._model = model
 
-    async def complete(self, system_prompt: str, user_message: str) -> str:
-        response = await self._client.chat.completions.create(
+    async def complete(self, system_prompt: str, user_message: str, schema: dict | None = None) -> str:
+        extra = {"output_config": {"format": {"type": "json_schema", "schema": schema}}} if schema else {}
+        response = await self._client.beta.messages.create(
             model=self._model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
+            max_tokens=16000,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_message}],
+            thinking={"type": "adaptive"},
+            # A request the model's safety checks decline is re-run on the
+            # model Anthropic recommends for that case instead of failing.
+            betas=["server-side-fallback-2026-07-01"],
+            fallbacks="default",
+            **extra,
         )
-        return response.choices[0].message.content or ""
+        if response.stop_reason == "refusal":
+            raise AiRefused()
+        return "".join(block.text for block in response.content if block.type == "text")
+
+
+DEFAULT_MODEL = "claude-opus-5"
 
 
 def build_provider() -> AiProvider:
     """
-    The provider this deployment is configured for.
-
-    AI_MODEL has no default. A model identifier in source is not evidence that
-    the provider serves it, and a wrong default fails at request time with a
-    message about the model rather than about the configuration -- so the
-    absence of a model is treated the same as the absence of a key.
+    The provider this deployment is configured for: Claude when
+    ANTHROPIC_API_KEY is set. AI_MODEL overrides the model.
     """
-    api_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
-    model = (os.environ.get("AI_MODEL") or "").strip()
-    if not api_key or not model:
+    api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+    if not api_key:
         return NotConfiguredProvider()
-    return OpenAiProvider(api_key, model)
+    return ClaudeProvider(api_key, (os.environ.get("AI_MODEL") or "").strip() or DEFAULT_MODEL)
