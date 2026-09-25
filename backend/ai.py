@@ -2,7 +2,7 @@ import json
 from fastapi import HTTPException
 
 import analytics
-from ai_provider import build_provider
+from ai_provider import AiRefused, build_provider
 from database import db
 
 SYSTEM_PROMPT = (
@@ -17,7 +17,7 @@ SYSTEM_PROMPT = (
 )
 
 
-async def _ask(prompt: str) -> str:
+async def _ask(prompt: str, schema: dict | None = None) -> str:
     """
     Send one grounded prompt and return the text.
 
@@ -25,13 +25,26 @@ async def _ask(prompt: str) -> str:
     start-up takes effect without a restart -- and so a deployment with no
     model configured still starts and still serves its analytics.
     """
+    import anthropic
+
     provider = build_provider()
     if not getattr(provider, "configured", False):
         raise HTTPException(
             status_code=503,
             detail="AI insights are not configured yet. Your stored analytics are still available.",
         )
-    return await provider.complete(SYSTEM_PROMPT, prompt)
+    try:
+        return await provider.complete(SYSTEM_PROMPT, prompt, schema)
+    except AiRefused:
+        raise HTTPException(status_code=422, detail="The AI declined this question. Try asking it another way.")
+    except anthropic.AuthenticationError:
+        raise HTTPException(status_code=503, detail="The AI key was rejected. Check ANTHROPIC_API_KEY.")
+    except anthropic.PermissionDeniedError:
+        raise HTTPException(status_code=503, detail="The AI account cannot use this model. Check its credit and access.")
+    except anthropic.RateLimitError:
+        raise HTTPException(status_code=503, detail="The AI is busy right now. Please try again in a minute.")
+    except (anthropic.APIStatusError, anthropic.APIConnectionError):
+        raise HTTPException(status_code=502, detail="The AI could not be reached. Please try again.")
 
 
 def _fmt(n):
@@ -89,6 +102,17 @@ async def _build_facts(profile_id: str, release_id=None) -> dict:
     return facts
 
 
+INSIGHT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "recommendations": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["summary", "recommendations"],
+    "additionalProperties": False,
+}
+
+
 async def generate_insight(profile_id: str, release_id=None) -> dict:
     facts = await _build_facts(profile_id, release_id)
     if facts["release_count"] == 0:
@@ -104,8 +128,19 @@ async def generate_insight(profile_id: str, release_id=None) -> dict:
         "then 3 concrete recommendations. Respond as JSON with keys 'summary' (string) and "
         "'recommendations' (array of short strings). Only use the numbers above."
     )
-    resp = await _ask(prompt)
+    resp = await _ask(prompt, INSIGHT_SCHEMA)
     return _parse_json_response(resp, facts)
+
+
+ANSWER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "answer": {"type": "string"},
+        "follow_ups": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["answer", "follow_ups"],
+    "additionalProperties": False,
+}
 
 
 async def answer_question(profile_id: str, question: str) -> dict:
@@ -115,10 +150,23 @@ async def answer_question(profile_id: str, question: str) -> dict:
         + json.dumps(facts, indent=2)
         + f"\n\nUser question: {question}\n\n"
         "Answer using ONLY the facts above. If the facts are insufficient, say so plainly. "
-        "Reference specific figures. Keep it to a few sentences."
+        "Reference specific figures. Keep it to a few sentences. "
+        "Then suggest 2-3 short follow-up questions (under 12 words each) the artist might ask next, "
+        "that the facts above can answer."
     )
-    resp = await _ask(prompt)
-    return {"answer": resp.strip(), "grounded": facts["release_count"] > 0, "facts_used": facts}
+    resp = await _ask(prompt, ANSWER_SCHEMA)
+    try:
+        data = json.loads(resp)
+        answer = str(data.get("answer", "")).strip()
+        follow_ups = [str(q).strip() for q in data.get("follow_ups", []) if str(q).strip()][:3]
+    except Exception:
+        answer, follow_ups = resp.strip(), []
+    return {
+        "answer": answer,
+        "follow_ups": follow_ups,
+        "grounded": facts["release_count"] > 0,
+        "facts_used": facts,
+    }
 
 
 def _parse_json_response(resp: str, facts: dict) -> dict:

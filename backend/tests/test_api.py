@@ -453,7 +453,7 @@ class ReportsAndDemo(ApiTestCase):
         self.assertEqual(overview["release_count"], 3)
         self.assertGreater(overview["totals"]["reach"], 0)
 
-        async def fake_ask(prompt):
+        async def fake_ask(prompt, schema=None):
             return '{"summary": "Grounded summary", "recommendations": ["one"]}'
 
         with patch("ai._ask", fake_ask):
@@ -473,10 +473,44 @@ class ReportsAndDemo(ApiTestCase):
         token = self.register("noai@example.com")["token"]
         profile = self.profile_id(token)
         self.client.post("/api/demo/seed", headers=self.auth(token))
-        with patch.dict("os.environ", {"OPENAI_API_KEY": "", "AI_MODEL": ""}):
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "", "AI_MODEL": ""}):
             response = self.client.post("/api/ai/ask", headers=self.auth(token),
                                         json={"profile_id": profile, "question": "How am I doing?"})
         self.assertEqual(response.status_code, 503)
+
+    def test_ai_answers_with_follow_up_questions(self):
+        import ai_provider
+        token = self.register("claude@example.com")["token"]
+        profile = self.profile_id(token)
+        self.client.post("/api/demo/seed", headers=self.auth(token))
+        prompts = []
+
+        class FakeClaude:
+            configured = True
+
+            async def complete(self, system_prompt, user_message, schema=None):
+                prompts.append((user_message, schema))
+                if "refuse" in user_message:
+                    raise ai_provider.AiRefused()
+                return '{"answer": "Reach is up.", "follow_ups": ["Why?", "  ", "Which song?", "Where?", "When?"]}'
+
+        with patch("ai.build_provider", FakeClaude):
+            ask = lambda q: self.client.post("/api/ai/ask", headers=self.auth(token),
+                                             json={"profile_id": profile, "question": q})
+            body = ask("How am I doing?").json()
+            refused = ask("please refuse")
+        self.assertEqual((body["answer"], body["follow_ups"]), ("Reach is up.", ["Why?", "Which song?", "Where?"]))
+        self.assertIn("FACTS", prompts[0][0])
+        self.assertEqual(prompts[0][1]["required"], ["answer", "follow_ups"])
+        self.assertEqual(refused.status_code, 422)
+
+    def test_claude_is_configured_by_its_key(self):
+        import ai_provider
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "", "AI_MODEL": ""}):
+            self.assertFalse(ai_provider.build_provider().configured)
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test", "AI_MODEL": ""}):
+            provider = ai_provider.build_provider()
+        self.assertEqual((provider.configured, provider._model), (True, "claude-opus-5"))
 
 
 @requires_postgres
