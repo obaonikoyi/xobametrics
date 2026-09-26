@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import api, { compactNumber, fullNumber } from "@/lib/api";
 import { useAi } from "@/context/AiContext";
 import { PlatformBadge, Freshness, METRIC_OPTIONS } from "@/components/common";
+import { Benchmarks, DailyGainsChart, Milestones } from "@/components/Momentum";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -17,6 +18,7 @@ export default function ReleaseDetail() {
   const [metric, setMetric] = useState("reach");
   const [series, setSeries] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [momentum, setMomentum] = useState(null);
 
   const loadRelease = useCallback(async () => {
     setLoading(true);
@@ -30,6 +32,9 @@ export default function ReleaseDetail() {
   }, [id, metric]);
 
   useEffect(() => { loadRelease(); }, [loadRelease]);
+  useEffect(() => {
+    api.get(`/analytics/release-momentum/${id}`).then(({ data }) => setMomentum(data)).catch(() => setMomentum(null));
+  }, [id]);
   useEffect(() => { loadSeries(); }, [loadSeries]);
 
   if (loading || !data) return <div className="space-y-4"><Skeleton className="h-10 w-64" /><Skeleton className="h-72 rounded-xl" /></div>;
@@ -63,6 +68,16 @@ export default function ReleaseDetail() {
           </div>
         ))}
       </div>
+
+      {momentum && (
+        <>
+          <Benchmarks benchmark={momentum.benchmark} />
+          <div className="grid gap-4 lg:grid-cols-3">
+            <DailyGainsChart daily={momentum.daily} className="lg:col-span-2" testId="release-daily-gains" />
+            <Milestones milestones={momentum.milestones} subtitle="Totals this song has passed, counted from Day 0." />
+          </div>
+        </>
+      )}
 
       <div className="rounded-xl border border-border bg-card p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">

@@ -14,6 +14,7 @@ from models import (
     new_id, now_iso,
 )
 import analytics
+import momentum as momentum_analytics
 import ai
 import csv_import
 import storage
@@ -438,6 +439,18 @@ async def race(profile_id: str, release_ids: str, metric: str = "reach", max_day
     await _owned_profile(profile_id, user)
     ids = [x for x in release_ids.split(",") if x]
     return await analytics.release_race(profile_id, ids, metric, max_day)
+
+
+@api_router.get("/analytics/momentum")
+async def momentum(profile_id: str, metric: str = "reach", user: dict = Depends(get_current_user)):
+    await _owned_profile(profile_id, user)
+    return await momentum_analytics.profile_momentum(profile_id, metric)
+
+
+@api_router.get("/analytics/release-momentum/{release_id}")
+async def release_momentum(release_id: str, metric: str = "reach", user: dict = Depends(get_current_user)):
+    release = await _owned_release(release_id, user)
+    return await momentum_analytics.release_momentum(release["profile_id"], release_id, metric)
 
 
 # ---------- AI ----------
