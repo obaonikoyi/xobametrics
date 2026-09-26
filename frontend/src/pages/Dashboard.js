@@ -6,6 +6,7 @@ import { useWorkspace } from "@/context/WorkspaceContext";
 import { useAi } from "@/context/AiContext";
 import { StatCard, Freshness } from "@/components/common";
 import CsvUploadDialog from "@/components/CsvUploadDialog";
+import { DailyGainsChart, WeekTile, TakingOff, Milestones, FanQuality } from "@/components/Momentum";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -25,13 +26,18 @@ export default function Dashboard() {
   const [insightLoading, setInsightLoading] = useState(false);
   const [insightError, setInsightError] = useState("");
   const [seeding, setSeeding] = useState(false);
+  const [momentum, setMomentum] = useState(null);
 
   const load = useCallback(async () => {
     if (!activeProfile) return;
     setLoading(true);
     try {
-      const { data } = await api.get(`/analytics/overview?profile_id=${activeProfile.id}`);
-      setData(data);
+      const [overview, moves] = await Promise.all([
+        api.get(`/analytics/overview?profile_id=${activeProfile.id}`),
+        api.get(`/analytics/momentum?profile_id=${activeProfile.id}`).catch(() => null),
+      ]);
+      setData(overview.data);
+      setMomentum(moves?.data || null);
     } finally {
       setLoading(false);
     }
@@ -128,6 +134,22 @@ export default function Dashboard() {
           Ask a follow-up <ArrowRight className="h-3.5 w-3.5" />
         </Button>
       </motion.div>
+
+      {momentum && (
+        <>
+          <div className="grid gap-4 lg:grid-cols-3">
+            <div className="space-y-4">
+              <WeekTile week={momentum.week} />
+              <TakingOff alerts={momentum.alerts} onOpen={(id) => navigate(`/releases/${id}`)} />
+            </div>
+            <DailyGainsChart daily={momentum.daily} className="lg:col-span-2" />
+          </div>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Milestones milestones={momentum.milestones} onOpen={(id) => navigate(`/releases/${id}`)} />
+            <FanQuality quality={momentum.quality} onOpen={(id) => navigate(`/releases/${id}`)} />
+          </div>
+        </>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="rounded-xl border border-border bg-card p-5 lg:col-span-2">

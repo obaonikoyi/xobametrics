@@ -149,6 +149,7 @@ async def profile_overview(profile_id: str) -> dict:
             "cover": r.get("cover"),
             "reach": rt["totals"]["reach"],
             "engagement": rt["totals"]["engagement"],
+            "followers": rt["totals"]["followers"],
             "content_count": rt["content_count"],
         })
     release_rows.sort(key=lambda x: x["reach"], reverse=True)
