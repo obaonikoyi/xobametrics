@@ -24,7 +24,7 @@ const shortDate = (d) => {
 };
 
 let regionNames;
-function countryName(code) {
+export function countryName(code) {
   try {
     regionNames = regionNames || new Intl.DisplayNames(["en"], { type: "region" });
     return regionNames.of(code) || code;
@@ -33,17 +33,17 @@ function countryName(code) {
   }
 }
 
-function flag(code) {
+export function flag(code) {
   if (!/^[A-Z]{2}$/.test(code || "")) return "";
   return String.fromCodePoint(...[...code].map((c) => 0x1f1e6 + c.charCodeAt(0) - 65));
 }
 
-function RankedBars({ rows, labelFor, iconFor, testId }) {
+export function RankedBars({ rows, labelFor, iconFor, testId, unit = "views" }) {
   const max = Math.max(...rows.map((r) => r.views), 1);
   return (
     <ul className="mt-4 space-y-2.5" data-testid={testId}>
       {rows.map((r) => (
-        <li key={labelFor(r)} title={`${labelFor(r)}: ${fullNumber(r.views)} views`}>
+        <li key={labelFor(r)} title={`${labelFor(r)}: ${fullNumber(r.views)} ${unit}`}>
           <div className="flex items-baseline justify-between gap-3 text-sm">
             <span className="min-w-0 truncate">{iconFor && <span className="mr-1.5" aria-hidden="true">{iconFor(r)}</span>}{labelFor(r)}</span>
             <span className="shrink-0 font-mono-metric text-xs text-muted-foreground">

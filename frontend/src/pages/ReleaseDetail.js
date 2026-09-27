@@ -5,6 +5,7 @@ import { useAi } from "@/context/AiContext";
 import { PlatformBadge, Freshness, METRIC_OPTIONS } from "@/components/common";
 import { Benchmarks, DailyGainsChart, Milestones } from "@/components/Momentum";
 import Audience from "@/components/Audience";
+import AllStores from "@/components/AllStores";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -81,6 +82,7 @@ export default function ReleaseDetail() {
       )}
 
       {content.some((c) => c.platform === "youtube") && <Audience profileId={release.profile_id} releaseId={release.id} />}
+      <AllStores profileId={release.profile_id} releaseId={release.id} />
 
       <div className="rounded-xl border border-border bg-card p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">

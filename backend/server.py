@@ -12,6 +12,7 @@ from routes import api_router
 from youtube import router as youtube_router, _configured as youtube_configured
 from youtube_history import router as youtube_history_router
 from youtube_audience import router as youtube_audience_router
+from imports import router as imports_router
 from soundcloud import router as soundcloud_router, _configured as soundcloud_configured
 from models import new_id, now_iso
 import storage
@@ -42,6 +43,7 @@ app.include_router(api_router)
 app.include_router(youtube_router)
 app.include_router(youtube_history_router)
 app.include_router(youtube_audience_router)
+app.include_router(imports_router)
 app.include_router(soundcloud_router)
 
 _frontend = os.environ.get("FRONTEND_URL", "").strip().rstrip("/")

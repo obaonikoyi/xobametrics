@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
-  Activity, LayoutDashboard, Disc3, Zap, PlugZap, FileBarChart, Sparkles,
+  Activity, LayoutDashboard, Disc3, Zap, PlugZap, FileBarChart, BookOpen, Sparkles,
   Sun, Moon, ChevronDown, LogOut, Users, Check, Menu, X, KeyRound,
 } from "lucide-react";
 
@@ -24,6 +24,7 @@ const NAV = [
   { to: "/race", label: "Release Race", icon: Zap },
   { to: "/connections", label: "Connections", icon: PlugZap },
   { to: "/reports", label: "Reports", icon: FileBarChart },
+  { to: "/guide", label: "Get your data", icon: BookOpen },
 ];
 
 function initials(name) {
