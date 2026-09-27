@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import api, { formatApiErrorDetail } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { googleSignInConfigured, startGoogleSignIn } from "@/lib/googleSignIn";
+import { googleSignInConfigured, googleSignInLastKnown, startGoogleSignIn } from "@/lib/googleSignIn";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,7 +20,7 @@ export default function Login() {
   const [busy, setBusy] = useState(false);
   const { setSession } = useAuth();
   const navigate = useNavigate();
-  const [googleAvailable, setGoogleAvailable] = useState(false);
+  const [googleAvailable, setGoogleAvailable] = useState(googleSignInLastKnown);
 
   useEffect(() => {
     googleSignInConfigured().then(setGoogleAvailable);

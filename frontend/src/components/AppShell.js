@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { formatApiErrorDetail } from "@/lib/api";
-import { googleSignInConfigured, startGoogleSignIn } from "@/lib/googleSignIn";
+import { googleSignInConfigured, googleSignInLastKnown, startGoogleSignIn } from "@/lib/googleSignIn";
 import { useTheme } from "@/context/ThemeContext";
 import { useWorkspace } from "@/context/WorkspaceContext";
 import { useAi } from "@/context/AiContext";
@@ -37,7 +37,7 @@ export default function AppShell({ children }) {
   const { openWith } = useAi();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [googleAvailable, setGoogleAvailable] = useState(false);
+  const [googleAvailable, setGoogleAvailable] = useState(googleSignInLastKnown);
 
   useEffect(() => {
     googleSignInConfigured().then(setGoogleAvailable);

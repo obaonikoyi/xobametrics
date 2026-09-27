@@ -23,13 +23,34 @@ export function takeGoogleBrowserKey() {
   return key;
 }
 
+const STATUS_KEY = "xoba_google_signin";
+
+// The last answer the server gave, so the button is on screen with the rest
+// of the form instead of appearing once the status request comes back.
+// Shown by default: this deployment has Google sign-in configured.
+export function googleSignInLastKnown() {
+  try {
+    return localStorage.getItem(STATUS_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+
 export async function googleSignInConfigured() {
+  let configured;
   try {
     const { data } = await api.get("/auth/google/status");
-    return Boolean(data?.configured);
+    configured = Boolean(data?.configured);
   } catch {
-    return false;
+    // Unreachable is not "switched off": keep the last known answer.
+    return googleSignInLastKnown();
   }
+  try {
+    localStorage.setItem(STATUS_KEY, configured ? "on" : "off");
+  } catch {
+    // Storage blocked: the answer still applies to this page.
+  }
+  return configured;
 }
 
 export function isGoogleLanding() {
