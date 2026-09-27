@@ -7,6 +7,7 @@ import { useAi } from "@/context/AiContext";
 import { StatCard, Freshness } from "@/components/common";
 import CsvUploadDialog from "@/components/CsvUploadDialog";
 import { DailyGainsChart, WeekTile, TakingOff, Milestones, FanQuality } from "@/components/Momentum";
+import Audience from "@/components/Audience";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -150,6 +151,8 @@ export default function Dashboard() {
           </div>
         </>
       )}
+
+      <Audience profileId={activeProfile.id} />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="rounded-xl border border-border bg-card p-5 lg:col-span-2">

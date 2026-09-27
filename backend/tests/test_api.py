@@ -720,6 +720,85 @@ class PlatformOAuthFlows(ApiTestCase):
         self.run_db(sync.sync_profile, profile)
         self.assertEqual(len(analytics_calls), 1)
 
+    def test_youtube_audience(self):
+        import youtube
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        calls = []
+
+        def analytics(kw):
+            params = kw["params"]
+            calls.append(params)
+            if params["dimensions"] == "insightTrafficSourceType":
+                return 200, {"columnHeaders": [{"name": "insightTrafficSourceType"}, {"name": "views"}],
+                             "rows": [["YT_SEARCH", 60], ["SUGGESTED", 25], ["RELATED_VIDEO", 5], ["EXT_URL", 10]]}
+            if params["dimensions"] == "country":
+                return 200, {"columnHeaders": [{"name": "country"}, {"name": "views"}],
+                             "rows": [["NG", 60], ["GB", 20]]}
+            if params["dimensions"] == "day,video":
+                return 200, {"columnHeaders": [{"name": "day"}, {"name": "video"}, {"name": "views"}], "rows": []}
+            raise AssertionError(params)
+
+        FakePlatform.routes = {
+            youtube.TOKEN_URL: lambda kw: (200, {
+                "access_token": "yt-access", "refresh_token": "yt-refresh", "expires_in": 3600,
+                "scope": f"{youtube.YOUTUBE_READ_SCOPE} {youtube.YOUTUBE_ANALYTICS_SCOPE}"}),
+            f"{youtube.YOUTUBE_API}/channels": lambda kw: (200, {"items": [{
+                "id": "chan1", "snippet": {"title": "Luna"},
+                "contentDetails": {"relatedPlaylists": {"uploads": "UU1"}},
+                "statistics": {"viewCount": "100", "subscriberCount": "5", "videoCount": "1"}}]}),
+            f"{youtube.YOUTUBE_API}/playlistItems": lambda kw: (200, {"items": [{"contentDetails": {"videoId": "v1"}}]}),
+            f"{youtube.YOUTUBE_API}/videos": lambda kw: (200, {"items": [
+                {"id": "v1", "snippet": {"title": "Song", "publishedAt": "2026-01-01T12:00:00Z"},
+                 "statistics": {"viewCount": "100", "likeCount": "1", "commentCount": "0"}}]}),
+            "https://youtubeanalytics.googleapis.com": analytics,
+        }
+        body = self.register("youtube-audience@example.com")
+        token, profile = body["token"], self.profile_id(body["token"])
+        self.callback("youtube", self.connect("youtube", token, profile))
+        release = self.sql("SELECT release_id FROM content_items WHERE profile_id = $1", profile)[0]["release_id"]
+        calls.clear()
+
+        channel = self.client.get(f"/api/youtube/audience?profile_id={profile}", headers=self.auth(token)).json()
+        self.assertEqual(channel["status"], "ok")
+        self.assertEqual(channel["end"], yesterday)
+        self.assertEqual(channel["traffic"], [
+            {"source": "YouTube search", "views": 60, "share": 0.6},
+            {"source": "Suggested next to other videos", "views": 30, "share": 0.3},
+            {"source": "Other websites & apps", "views": 10, "share": 0.1},
+        ])
+        self.assertEqual([c["country"] for c in channel["countries"]], ["NG", "GB"])
+        # Out of all 100 views, not out of the 80 in the countries listed.
+        self.assertEqual([c["share"] for c in channel["countries"]], [0.6, 0.2])
+        self.assertEqual(channel["total_views"], 100)
+        self.assertNotIn("filters", calls[0])
+        self.assertEqual(len(calls), 2)
+
+        # Asked again: answered from the stored copy.
+        self.client.get(f"/api/youtube/audience?profile_id={profile}", headers=self.auth(token))
+        self.assertEqual(len(calls), 2)
+
+        # One release: its own videos, from its release date.
+        one = self.client.get(f"/api/youtube/audience?profile_id={profile}&release_id={release}&days=365",
+                              headers=self.auth(token)).json()
+        self.assertEqual(one["status"], "ok")
+        self.assertEqual(calls[-1]["filters"], "video==v1")
+        self.assertEqual(one["start"], max("2026-01-01", (date.today() - timedelta(days=365)).isoformat()))
+
+        # Someone else's release is not found.
+        other = self.register("youtube-audience-other@example.com")["token"]
+        response = self.client.get(f"/api/youtube/audience?profile_id={profile}&release_id={release}",
+                                   headers=self.auth(other))
+        self.assertEqual(response.status_code, 404)
+
+        # The Analytics API switched off in Google Cloud says so.
+        self.sql("DELETE FROM youtube_reports")
+        FakePlatform.routes["https://youtubeanalytics.googleapis.com"] = lambda kw: (403, {"error": {
+            "message": "YouTube Analytics API has not been used in project 1 before or it is disabled.",
+            "errors": [{"reason": "accessNotConfigured"}]}})
+        response = self.client.get(f"/api/youtube/audience?profile_id={profile}", headers=self.auth(token))
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("Enable the YouTube Analytics API", response.json()["detail"])
+
     def test_soundcloud(self):
         import soundcloud
         FakePlatform.routes = {
