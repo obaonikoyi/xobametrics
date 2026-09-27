@@ -16,6 +16,7 @@ import ReleaseDetail from "@/pages/ReleaseDetail";
 import ReleaseRace from "@/pages/ReleaseRace";
 import Connections from "@/pages/Connections";
 import Reports from "@/pages/Reports";
+import Guide from "@/pages/Guide";
 import SharedReport from "@/pages/SharedReport";
 import { Activity } from "lucide-react";
 
@@ -52,6 +53,7 @@ function AppRouter() {
         <Route path="/race" element={<ReleaseRace />} />
         <Route path="/connections" element={<Connections />} />
         <Route path="/reports" element={<Reports />} />
+        <Route path="/guide" element={<Guide />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>

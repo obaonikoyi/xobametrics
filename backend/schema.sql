@@ -187,6 +187,22 @@ CREATE TABLE IF NOT EXISTS files (
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Distributor report lines: one per content item (a song on one store),
+-- country and month. Snapshots with source 'distributor' are rebuilt from
+-- these, so re-importing a month replaces it.
+CREATE TABLE IF NOT EXISTS sales_lines (
+    content_item_id  TEXT NOT NULL REFERENCES content_items(id) ON DELETE CASCADE,
+    profile_id       TEXT NOT NULL REFERENCES creator_profiles(id) ON DELETE CASCADE,
+    country          TEXT NOT NULL,
+    month            DATE NOT NULL,
+    store            TEXT NOT NULL,
+    units            BIGINT NOT NULL,
+    earnings         NUMERIC(16, 6) NOT NULL DEFAULT 0,
+    imported_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (content_item_id, country, month)
+);
+CREATE INDEX IF NOT EXISTS sales_lines_profile_idx ON sales_lines (profile_id, month);
+
 -- YouTube Analytics breakdowns (traffic sources, countries), kept for a few
 -- hours so opening a page does not ask YouTube again each time.
 CREATE TABLE IF NOT EXISTS youtube_reports (
