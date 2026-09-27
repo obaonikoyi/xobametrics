@@ -187,6 +187,16 @@ CREATE TABLE IF NOT EXISTS files (
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- YouTube Analytics breakdowns (traffic sources, countries), kept for a few
+-- hours so opening a page does not ask YouTube again each time.
+CREATE TABLE IF NOT EXISTS youtube_reports (
+    profile_id  TEXT NOT NULL REFERENCES creator_profiles(id) ON DELETE CASCADE,
+    report_key  TEXT NOT NULL,
+    rows        JSONB NOT NULL,
+    fetched_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (profile_id, report_key)
+);
+
 -- Short-lived OAuth and sign-in state. Each flow uses the columns it needs;
 -- expired rows are removed by a periodic cleanup.
 CREATE TABLE IF NOT EXISTS oauth_states (
