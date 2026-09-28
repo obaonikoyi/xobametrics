@@ -18,6 +18,7 @@ import Connections from "@/pages/Connections";
 import Reports from "@/pages/Reports";
 import Guide from "@/pages/Guide";
 import SharedReport from "@/pages/SharedReport";
+import { Privacy, Terms, DataDeletion } from "@/pages/Legal";
 import { Activity } from "lucide-react";
 
 function Protected() {
@@ -46,6 +47,9 @@ function AppRouter() {
       <Route path="/login" element={<Login />} />
       <Route path="/auth/google" element={<GoogleCallback />} />
       <Route path="/share/:shareId" element={<SharedReport />} />
+      <Route path="/privacy" element={<Privacy />} />
+      <Route path="/terms" element={<Terms />} />
+      <Route path="/data-deletion" element={<DataDeletion />} />
       <Route element={<Protected />}>
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/releases" element={<Releases />} />

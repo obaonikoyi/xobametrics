@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import api, { formatApiErrorDetail } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
@@ -138,6 +138,14 @@ export default function Login() {
             <button data-testid="auth-toggle-mode" onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(""); }} className="font-semibold text-primary hover:underline">
               {mode === "login" ? "Create an account" : "Sign in"}
             </button>
+          </p>
+          <p className="mt-4 text-center text-xs text-muted-foreground">
+            {mode === "register" && "By creating an account you agree to the "}
+            <Link to="/terms" className="hover:text-foreground hover:underline">Terms</Link>
+            {" · "}
+            <Link to="/privacy" className="hover:text-foreground hover:underline">Privacy</Link>
+            {" · "}
+            <Link to="/data-deletion" className="hover:text-foreground hover:underline">Data deletion</Link>
           </p>
         </div>
       </div>

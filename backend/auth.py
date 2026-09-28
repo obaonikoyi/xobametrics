@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Request, Response, HTTPException, Depends
 
 from database import db
-from models import RegisterRequest, LoginRequest, new_id, now_iso
+from models import DeleteAccountRequest, RegisterRequest, LoginRequest, new_id, now_iso
 
 JWT_ALGORITHM = "HS256"
 SESSION_TTL = timedelta(days=7)
@@ -223,5 +223,43 @@ async def logout(request: Request, response: Response):
             {"id": payload["sid"], "user_id": payload["sub"], "revoked_at": None},
             {"revoked_at": datetime.now(timezone.utc)},
         )
+    response.delete_cookie("access_token", path="/")
+    return {"ok": True}
+
+
+async def _revoke_platform_access(user_id: str) -> None:
+    """Tell Google to forget the YouTube tokens before they are deleted with the account."""
+    import httpx
+    from youtube import REVOKE_URL, _decrypt
+
+    connections = await db.find("platform_connections", {"owner_id": user_id, "platform": "youtube"})
+    async with httpx.AsyncClient(timeout=15) as client:
+        for connection in connections:
+            for field in ("refresh_token_enc", "access_token_enc"):
+                try:
+                    token = _decrypt(connection.get(field))
+                    if token:
+                        await client.post(REVOKE_URL, params={"token": token})
+                        break
+                except Exception:
+                    continue
+
+
+@auth_router.post("/delete-account")
+async def delete_account(body: DeleteAccountRequest, response: Response,
+                         user: dict = Depends(get_current_user)):
+    """
+    Delete the signed-in account and everything it owns: workspaces, profiles,
+    releases, snapshots, reports, uploads, platform connections and sessions
+    (all tables reference users with ON DELETE CASCADE).
+    """
+    if body.confirm.strip().upper() != "DELETE":
+        raise HTTPException(status_code=400, detail='Type DELETE to confirm.')
+    if user.get("password_hash") and not verify_password(body.password or "", user["password_hash"]):
+        raise HTTPException(status_code=401, detail="That password is not right.")
+    await _revoke_platform_access(user["user_id"])
+    async with db.transaction():
+        await db.execute("DELETE FROM login_attempts WHERE identifier LIKE $1", f"%:{user['email']}")
+        await db.delete("users", {"user_id": user["user_id"]})
     response.delete_cookie("access_token", path="/")
     return {"ok": True}

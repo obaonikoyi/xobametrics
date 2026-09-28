@@ -146,6 +146,35 @@ class AuthAndSessions(ApiTestCase):
 
 
 @requires_postgres
+@requires_postgres
+class AccountDeletion(ApiTestCase):
+    def test_delete_account_removes_everything_it_owns(self):
+        body = self.register("leaving@example.com")
+        token, user_id = body["token"], body["user"]["user_id"]
+        profile = self.profile_id(token)
+        self.client.post("/api/demo/seed", headers=self.auth(token))
+        self.client.post("/api/reports", headers=self.auth(token), json={"profile_id": profile, "title": "Q3"})
+        keep = self.register("staying@example.com")["token"]
+        self.client.post("/api/demo/seed", headers=self.auth(keep))
+
+        url = "/api/auth/delete-account"
+        self.assertEqual(self.client.post(url, headers=self.auth(token), json={"confirm": "no"}).status_code, 400)
+        wrong = self.client.post(url, headers=self.auth(token), json={"confirm": "DELETE", "password": "nope"})
+        self.assertEqual(wrong.status_code, 401)
+        self.assertEqual(self.sql("SELECT count(*) AS n FROM releases WHERE owner_id = $1", user_id)[0]["n"] > 0, True)
+
+        done = self.client.post(url, headers=self.auth(token), json={"confirm": "delete", "password": "Passw0rd!long"})
+        self.assertEqual(done.status_code, 200, done.text)
+        for table in ("users", "user_sessions", "workspaces", "creator_profiles", "releases", "content_items", "reports"):
+            column = "user_id" if table in ("users", "user_sessions") else "owner_id"
+            self.assertEqual(self.sql(f"SELECT count(*) AS n FROM {table} WHERE {column} = $1", user_id)[0]["n"], 0, table)
+        self.assertEqual(self.sql("SELECT count(*) AS n FROM metric_snapshots WHERE profile_id = $1", profile)[0]["n"], 0)
+        self.assertEqual(self.client.get("/api/auth/me", headers=self.auth(token)).status_code, 401)
+        # Nobody else's data went with it.
+        self.assertEqual(self.client.get("/api/auth/me", headers=self.auth(keep)).status_code, 200)
+        self.assertGreater(self.sql("SELECT count(*) AS n FROM releases")[0]["n"], 0)
+
+
 class DataIsolation(ApiTestCase):
     def test_other_users_data_is_not_found(self):
         owner = self.register("owner@example.com")["token"]
