@@ -10,8 +10,10 @@ React (CRACO) frontend on Vercel · FastAPI backend on Railway · PostgreSQL.
 
 ## Status — September 2026
 
-Paused to concentrate on two other projects. The product is built; what is
-left is putting it on its own domain and checking it end to end.
+Live in private beta at [xobametrics.com](https://xobametrics.com), on
+PostgreSQL. The data moved over from the original MongoDB database in
+September 2026 (`backend/mongo_import.py`, a one-time import kept until the
+old database is deleted).
 
 **Built**
 - Email/password sign-in with server-side sessions (signing out ends the
@@ -21,17 +23,19 @@ left is putting it on its own domain and checking it end to end.
   Google identity never takes over a password account by email; password
   users link Google from the account menu.
 - YouTube (`backend/youtube.py`, `youtube_history.py`) and SoundCloud
-  (`backend/soundcloud.py`) OAuth, daily sync and YouTube history backfill;
-  tokens encrypted at rest.
-- CSV import, release organisation and cross-platform merge suggestions,
-  Release Race, reports with public share links, and the grounded AI panel.
+  (`backend/soundcloud.py`) OAuth, daily sync and YouTube history backfill
+  from each video's Day 0; tokens encrypted at rest.
+- YouTube Analytics: daily gains, spikes, milestones and benchmarks against
+  earlier releases (`backend/momentum.py`), plus traffic sources and top
+  countries (`backend/youtube_audience.py`).
+- Distributor report import (DistroKid, TuneCore, CD Baby and others;
+  `backend/sales_import.py`, `backend/imports.py`) for every store and
+  country, with a "Get your data" guide in the app.
+- Release Race, reports with public share links, and an AI panel on Claude
+  that answers only from numbers the backend has calculated.
 
-**To finish**
-1. Point `xobametrics.com` at Vercel and `api.xobametrics.com` at Railway
-   (records in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#1-domain-and-dns)).
-2. Add a Postgres database on Railway and copy the old MongoDB data across
-   ([how](docs/DEPLOYMENT.md#2-database)).
-3. Set the AI and Google credentials, then run the acceptance checks.
+**Next**
+- TikTok and Instagram connections (developer apps pending platform review).
 
 Demo data is not live analytics, and snapshots written by the old synthetic
 sync worker (since removed) should be reviewed before being trusted.
