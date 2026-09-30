@@ -25,6 +25,11 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class DeleteAccountRequest(BaseModel):
+    confirm: str
+    password: Optional[str] = None
+
+
 # ---------- Domain ----------
 class ProfileCreate(BaseModel):
     workspace_id: str

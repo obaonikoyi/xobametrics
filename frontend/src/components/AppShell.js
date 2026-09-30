@@ -7,6 +7,7 @@ import { googleSignInConfigured, googleSignInLastKnown, startGoogleSignIn } from
 import { useTheme } from "@/context/ThemeContext";
 import { useWorkspace } from "@/context/WorkspaceContext";
 import { useAi } from "@/context/AiContext";
+import DeleteAccountDialog from "@/components/DeleteAccountDialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
@@ -15,7 +16,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Activity, LayoutDashboard, Disc3, Zap, PlugZap, FileBarChart, BookOpen, Sparkles,
-  Sun, Moon, ChevronDown, LogOut, Users, Check, Menu, X, KeyRound,
+  Sun, Moon, ChevronDown, LogOut, Trash2, Users, Check, Menu, X, KeyRound,
 } from "lucide-react";
 
 const NAV = [
@@ -38,6 +39,7 @@ export default function AppShell({ children }) {
   const { openWith } = useAi();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [googleAvailable, setGoogleAvailable] = useState(googleSignInLastKnown);
 
   useEffect(() => {
@@ -163,11 +165,16 @@ export default function AppShell({ children }) {
                     <KeyRound className="h-4 w-4" /> Connect Google sign-in
                   </DropdownMenuItem>
                 )}
-                <DropdownMenuItem data-testid="logout-button" onClick={() => { logout(); navigate("/login"); }} className="gap-2 text-destructive">
+                <DropdownMenuItem data-testid="logout-button" onClick={() => { logout(); navigate("/login"); }} className="gap-2">
                   <LogOut className="h-4 w-4" /> Sign out
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem data-testid="delete-account-menu" onClick={() => setDeleting(true)} className="gap-2 text-destructive">
+                  <Trash2 className="h-4 w-4" /> Delete account
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <DeleteAccountDialog open={deleting} onOpenChange={setDeleting} />
           </div>
         </header>
 

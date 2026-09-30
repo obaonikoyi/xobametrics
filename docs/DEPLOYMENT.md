@@ -27,21 +27,26 @@ Vercel and Railway issue their own certificates, and the proxy gets in the way.
 
 Remove any parking A/AAAA/CNAME records Cloudflare created on `@` or `www`.
 
-### Email anti-spoofing
+### Email
 
-The domain neither sends nor receives email, so tell the world to reject any
-that claims to be from it:
+The domain sends no email, but receives it at **hello@xobametrics.com** (the
+contact address on the Privacy, Terms and Data deletion pages, which Google,
+TikTok and Meta check) through Cloudflare Email Routing, forwarded to the
+owner's inbox:
 
-| Type | Name | Content |
-| --- | --- | --- |
-| TXT | `@` | `v=spf1 -all` |
-| TXT | `_dmarc` | `v=DMARC1; p=reject; sp=reject; adkim=s; aspf=s` |
-| TXT | `*._domainkey` | `v=DKIM1; p=` |
-| MX | `@` | `.` priority `0` (null MX; skip if Cloudflare refuses it) |
+1. Cloudflare → xobametrics.com → DNS → Records: delete the null MX
+   (`MX @ .`) and the `TXT @ v=spf1 -all` record.
+2. Email → Email Routing → enable it and let it add its records (three
+   `route*.mx.cloudflare.net` MX records and an SPF TXT that includes
+   `_spf.mx.cloudflare.net`).
+3. Routing rules → create `hello@xobametrics.com` → Send to an email → the
+   owner's inbox, and confirm the verification email.
 
-When the product starts sending email (sign-up confirmation, password reset),
-replace the SPF record with the provider's and add its DKIM keys; keep DMARC.
-To receive email with Cloudflare Email Routing instead, drop the null MX.
+Keep the DMARC record (`TXT _dmarc v=DMARC1; p=reject; sp=reject; adkim=s;
+aspf=s`) and `TXT *._domainkey v=DKIM1; p=`: nothing sends as the domain, so
+anything claiming to is rejected. When the product starts sending email
+(sign-up confirmation, password reset), add the provider to SPF and its DKIM
+keys.
 
 Also: DNS → Settings → **Enable DNSSEC**. Optionally, once the site works, a
 CAA record `@` `0 issue "letsencrypt.org"` limits certificates to the issuer
