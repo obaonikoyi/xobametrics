@@ -11,8 +11,10 @@ import { Sparkles, Send, ShieldCheck, Bot, User } from "lucide-react";
 // is answerable from the facts the backend hands the AI.
 const SUGGESTIONS = [
   "How is my latest release doing compared with my others?",
+  "Is any song taking off right now?",
+  "Which countries listen to me most?",
+  "Where do my YouTube views come from?",
   "Which release had the strongest first week?",
-  "Which platform brings me the most reach?",
   "Write my weekly report: key numbers, what changed, 3 actions.",
   "What should I focus on to grow next month?",
 ];

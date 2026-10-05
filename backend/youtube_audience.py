@@ -107,18 +107,12 @@ async def _report(access_token: str, start: date, end: date, videos: list[str] |
     }
 
 
-@router.get("/audience")
-async def youtube_audience(
-    profile_id: str = Query(...),
-    release_id: str | None = Query(None),
-    days: int = Query(28, ge=7, le=365),
-    user: dict = Depends(get_current_user),
-):
-    await _owned_profile(profile_id, user["user_id"])
-    videos = await _video_ids(profile_id, user["user_id"], release_id)
+async def audience_report(profile_id: str, owner_id: str, release_id: str | None = None, days: int = 28) -> dict:
+    """Traffic sources and top countries, or a status saying why there are none."""
+    videos = await _video_ids(profile_id, owner_id, release_id)
     if videos == []:
         return {"status": "no_videos", "traffic": [], "countries": []}
-    connection = await _connection(profile_id, user["user_id"])
+    connection = await _connection(profile_id, owner_id)
     if not connection or connection.get("status") != "connected":
         return {"status": "not_connected", "traffic": [], "countries": []}
     if not _scope_granted(connection):
@@ -147,3 +141,14 @@ async def youtube_audience(
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }, conflict=("profile_id", "report_key"))
     return {"status": "ok", "start": start.isoformat(), "end": end.isoformat(), **report}
+
+
+@router.get("/audience")
+async def youtube_audience(
+    profile_id: str = Query(...),
+    release_id: str | None = Query(None),
+    days: int = Query(28, ge=7, le=365),
+    user: dict = Depends(get_current_user),
+):
+    await _owned_profile(profile_id, user["user_id"])
+    return await audience_report(profile_id, user["user_id"], release_id, days)
