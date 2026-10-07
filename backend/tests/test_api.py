@@ -533,6 +533,48 @@ class ReportsAndDemo(ApiTestCase):
         self.assertEqual(prompts[0][1]["required"], ["answer", "follow_ups"])
         self.assertEqual(refused.status_code, 422)
 
+    def test_ai_sees_momentum_countries_and_what_is_missing(self):
+        import json as _json
+        import ai_provider
+        token = self.register("trends@example.com")["token"]
+        profile = self.profile_id(token)
+        h = self.auth(token)
+        self.client.post("/api/demo/seed", headers=h)
+        report = "\n".join([
+            "Sale Month\tStore\tArtist\tTitle\tISRC\tQuantity\tCountry of Sale\tEarnings (USD)",
+            "2026-06\tSpotify\tLuna\tNeon Rain\tQZ1\t900\tNG\t2.00",
+            "2026-06\tBoomplay\tLuna\tNeon Rain\tQZ1\t300\tGH\t0.30",
+        ])
+        imported = self.client.post("/api/imports/commit", headers={**h, "X-Requested-With": "XobaMetrics"},
+                                    data={"profile_id": profile},
+                                    files={"file": ("distrokid.tsv", report.encode(), "text/plain")})
+        self.assertEqual(imported.status_code, 200, imported.text)
+        prompts = []
+
+        class FakeClaude:
+            configured = True
+
+            async def complete(self, system_prompt, user_message, schema=None):
+                prompts.append(user_message)
+                return '{"answer": "Nigeria.", "follow_ups": []}'
+
+        with patch("ai.build_provider", FakeClaude):
+            response = self.client.post("/api/ai/ask", headers=h,
+                                        json={"profile_id": profile, "question": "Which countries listen most?"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertNotIn("facts_used", response.json())
+        facts = _json.loads(prompts[0].split("\n\nUser question:")[0].split(":\n", 1)[1])
+        sales = facts["distributor_reports"]
+        self.assertEqual((sales["status"], sales["total_streams"], sales["months"]), ("ok", 1200, "2026-06 to 2026-06"))
+        self.assertEqual(sales["top_countries"][0], {"country": "NG", "units": 900, "share": 0.75})
+        self.assertEqual([s["platform"] for s in sales["by_store"]], ["spotify", "boomplay"])
+        # The demo's YouTube connection has no Analytics permission: the model
+        # is told so rather than given nothing.
+        self.assertEqual(facts["youtube_audience"], {"scope": "whole channel", "status": "needs_permission"})
+        self.assertEqual(set(facts["momentum"]), {"metric", "week", "taking_off", "recent_milestones",
+                                                  "vs_earlier_releases", "fan_quality"})
+        self.assertIn("trend_notes", facts)
+
     def test_claude_is_configured_by_its_key(self):
         import ai_provider
         with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "", "AI_MODEL": ""}):

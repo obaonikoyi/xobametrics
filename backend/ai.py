@@ -1,3 +1,4 @@
+import asyncio
 import json
 from fastapi import HTTPException
 
@@ -102,6 +103,105 @@ async def _build_facts(profile_id: str, release_id=None) -> dict:
     return facts
 
 
+AUDIENCE_TIMEOUT_SECONDS = 10
+
+
+def _momentum_facts(m: dict, titles: dict) -> dict:
+    """The parts of the momentum analytics an artist asks about, keyed by title."""
+    benchmarks = []
+    for release_id, marks in m["benchmarks"].items():
+        compared = {day: mark for day, mark in marks.items() if mark["index"] is not None}
+        if compared and release_id in titles:
+            benchmarks.append({"title": titles[release_id], **{
+                day: {"value": mark["value"], "usual_for_earlier_releases": mark["usual"],
+                      "times_usual": mark["index"], "earlier_releases_compared": mark["compared_with"]}
+                for day, mark in compared.items()
+            }})
+    return {
+        "metric": m["metric"],
+        "week": m["week"],
+        "taking_off": [
+            {"title": a["title"], "date": a["date"], "gained": a["gained"],
+             "usual_daily_gain": a["usual"], "times_usual": a["ratio"]}
+            for a in m["alerts"]
+        ],
+        "recent_milestones": [
+            {"title": x["title"], "reached": x["threshold"], "days_after_release": x["day"], "date": x["date"]}
+            for x in m["milestones"][:8]
+        ],
+        "vs_earlier_releases": benchmarks,
+        "fan_quality": m["quality"],
+    }
+
+
+def _ranked(rows: list[dict], key: str, value: str, limit: int) -> list[dict]:
+    return [{key: r[key], value: r[value], "share": r["share"]} for r in rows[:limit]]
+
+
+async def _trend_facts(profile_id: str, release_id: str | None = None) -> dict:
+    """
+    Momentum, YouTube audience and distributor-report facts. Each part is
+    optional: one that fails or has no data is described, not dropped silently,
+    so the model can say what is missing instead of guessing.
+    """
+    import imports
+    import momentum
+    import youtube_audience
+
+    facts = {}
+    profile = await db.find_one("creator_profiles", {"id": profile_id})
+    titles = {r["id"]: r["title"] for r in await db.find("releases", {"profile_id": profile_id})}
+
+    try:
+        facts["momentum"] = _momentum_facts(await momentum.profile_momentum(profile_id), titles)
+    except Exception:
+        facts["momentum"] = {"status": "unavailable"}
+
+    try:
+        audience = await asyncio.wait_for(
+            youtube_audience.audience_report(profile_id, profile["owner_id"], release_id, 365 if release_id else 28),
+            AUDIENCE_TIMEOUT_SECONDS,
+        )
+        if audience["status"] == "ok":
+            audience = {
+                "status": "ok", "period": f"{audience['start']} to {audience['end']}",
+                "total_views": audience["total_views"],
+                "where_views_come_from": _ranked(audience["traffic"], "source", "views", 8),
+                "top_countries": _ranked(audience["countries"], "country", "views", 10),
+            }
+        else:
+            audience = {"status": audience["status"]}
+    except Exception:
+        audience = {"status": "unavailable"}
+    facts["youtube_audience"] = {"scope": titles.get(release_id, "whole channel"), **audience}
+
+    try:
+        sales = await imports.distributor_breakdown(profile_id, release_id)
+        if sales["status"] == "ok":
+            sales = {
+                "status": "ok", "months": f"{sales['first_month'][:7]} to {sales['last_month'][:7]}",
+                "total_streams": sales["total_units"],
+                "top_countries": _ranked(sales["countries"], "country", "units", 10),
+                "by_store": _ranked(sales["stores"], "platform", "units", 10),
+            }
+    except Exception:
+        sales = {"status": "unavailable"}
+    facts["distributor_reports"] = sales
+
+    facts["trend_notes"] = (
+        "momentum.week compares the gain over the last 7 observed days with the 7 before; change is null "
+        "unless both weeks were fully observed. taking_off lists songs whose latest daily gain is well above "
+        "their usual day. vs_earlier_releases compares a song's Day 7 / Day 28 total with the median of the "
+        "artist's earlier releases (times_usual 1.5 = 50% better). fan_quality: engagement_rate is "
+        "interactions (likes, comments and shares where the platform reports them) per reach; followers_per_1k is new followers per 1,000 reach. "
+        "youtube_audience covers YouTube only. distributor_reports cover every store from uploaded "
+        "monthly reports, which usually run 2-3 months behind. Country codes are ISO 3166 two-letter codes: "
+        "write the country's name. A status other than ok means that data is not available: say so and "
+        "say how to get it (connect YouTube with Analytics permission, or upload a distributor report)."
+    )
+    return facts
+
+
 INSIGHT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -121,6 +221,7 @@ async def generate_insight(profile_id: str, release_id=None) -> dict:
             "recommendations": [],
             "grounded": False,
         }
+    facts.update(await _trend_facts(profile_id, release_id))
     prompt = (
         "Here are the FACTS computed by the backend:\n"
         + json.dumps(facts, indent=2)
@@ -145,6 +246,8 @@ ANSWER_SCHEMA = {
 
 async def answer_question(profile_id: str, question: str) -> dict:
     facts = await _build_facts(profile_id)
+    if facts["release_count"] > 0:
+        facts.update(await _trend_facts(profile_id))
     prompt = (
         "FACTS (backend-computed, the only numbers you may use):\n"
         + json.dumps(facts, indent=2)

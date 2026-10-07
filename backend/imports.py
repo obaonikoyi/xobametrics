@@ -186,11 +186,8 @@ async def commit(request: Request, file: UploadFile = File(...), profile_id: str
     }
 
 
-@router.get("/countries")
-async def countries(profile_id: str = Query(...), release_id: str | None = Query(None),
-                    months: int = Query(12, ge=1, le=120), user: dict = Depends(get_current_user)):
-    """Streams by country across every store, from imported reports."""
-    await _owned_profile(profile_id, user)
+async def distributor_breakdown(profile_id: str, release_id: str | None = None, months: int = 12) -> dict:
+    """Streams by country and by store across every store, from imported reports."""
     scope, args = "l.profile_id = $1", [profile_id]
     if release_id:
         scope += " AND c.release_id = $2"
@@ -223,3 +220,11 @@ async def countries(profile_id: str = Query(...), release_id: str | None = Query
         "stores": [{"platform": r["platform"], "units": r["units"], "share": round(r["units"] / total, 4)}
                    for r in by_store],
     }
+
+
+@router.get("/countries")
+async def countries(profile_id: str = Query(...), release_id: str | None = Query(None),
+                    months: int = Query(12, ge=1, le=120), user: dict = Depends(get_current_user)):
+    """Streams by country across every store, from imported reports."""
+    await _owned_profile(profile_id, user)
+    return await distributor_breakdown(profile_id, release_id, months)
