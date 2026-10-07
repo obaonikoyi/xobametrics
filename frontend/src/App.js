@@ -19,14 +19,14 @@ import Reports from "@/pages/Reports";
 import Guide from "@/pages/Guide";
 import SharedReport from "@/pages/SharedReport";
 import { Privacy, Terms, DataDeletion } from "@/pages/Legal";
-import { Activity } from "lucide-react";
+import { LogoMark } from "@/components/Logo";
 
 function Protected() {
   const { user, loading } = useAuth();
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
-        <Activity className="h-8 w-8 animate-pulse text-primary" />
+        <LogoMark className="h-10 w-auto animate-pulse" />
       </div>
     );
   }
@@ -70,7 +70,7 @@ export default function App() {
       <ThemeProvider>
         <main className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground" data-testid="backend-setup-required">
           <section className="w-full max-w-xl rounded-2xl border border-border bg-card p-8">
-            <Activity className="mb-4 h-8 w-8 text-primary" aria-hidden="true" />
+            <LogoMark className="mb-4 h-10 w-auto" />
             <h1 className="mb-3 text-2xl font-semibold">XobaMetrics</h1>
             <h2 className="mb-3 text-lg font-medium">Backend setup required</h2>
             <p className="mb-4 text-muted-foreground">{BACKEND_CONFIG_ERROR} Sign-in and analytics are unavailable until setup is complete.</p>
