@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import api, { compactNumber, fullNumber } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Activity, Sparkles, ShieldCheck } from "lucide-react";
+import { Sparkles, ShieldCheck } from "lucide-react";
+import Logo from "@/components/Logo";
 
 export default function SharedReport() {
   const { shareId } = useParams();
@@ -24,7 +25,7 @@ export default function SharedReport() {
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-3xl px-4 py-10">
         <div className="flex items-center gap-2 text-muted-foreground">
-          <Activity className="h-5 w-5 text-primary" /><span className="font-display font-semibold">XobaMetrics</span>
+          <Logo className="h-12 w-auto text-foreground" />
           <span className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-500"><ShieldCheck className="h-3.5 w-3.5" /> Verified numbers</span>
         </div>
         <h1 className="mt-6 font-display text-3xl font-extrabold tracking-tight">{report.title}</h1>

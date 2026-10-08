@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import Logo from "@/components/Logo";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { formatApiErrorDetail } from "@/lib/api";
@@ -15,7 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
-  Activity, LayoutDashboard, Disc3, Zap, PlugZap, FileBarChart, BookOpen, Sparkles,
+  LayoutDashboard, Disc3, Zap, PlugZap, FileBarChart, BookOpen, Sparkles,
   Sun, Moon, ChevronDown, LogOut, Trash2, Users, Check, Menu, X, KeyRound,
 } from "lucide-react";
 
@@ -58,14 +59,9 @@ export default function AppShell({ children }) {
 
   const SidebarContent = () => (
     <>
-      <div className="flex items-center gap-2 px-2 py-1">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-          <Activity className="h-5 w-5" />
-        </div>
-        <div>
-          <div className="font-display text-lg font-bold leading-none">XobaMetrics</div>
-          <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Private Beta</div>
-        </div>
+      <div className="flex items-end gap-3 px-2 py-1">
+        <Logo className="h-20 w-auto text-foreground" />
+        <div className="mb-1 rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Beta</div>
       </div>
       <nav className="mt-8 space-y-1">
         {NAV.map(({ to, label, icon: Icon }) => (

@@ -7,7 +7,8 @@ import { googleSignInConfigured, googleSignInLastKnown, startGoogleSignIn } from
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Activity, TrendingUp, Radio, Sparkles } from "lucide-react";
+import { TrendingUp, Radio, Sparkles } from "lucide-react";
+import Logo from "@/components/Logo";
 
 export default function Login() {
   const [mode, setMode] = useState("login");
@@ -63,13 +64,8 @@ export default function Login() {
     <div className="xoba-grid-bg flex min-h-screen w-full items-center justify-center bg-background p-4">
       <div className="grid w-full max-w-5xl overflow-hidden rounded-2xl border border-border bg-card shadow-2xl lg:grid-cols-2">
         {/* Left brand panel */}
-        <div className="relative hidden flex-col justify-between bg-gradient-to-br from-primary/90 to-blue-700 p-10 text-white lg:flex">
-          <div className="flex items-center gap-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/15">
-              <Activity className="h-5 w-5" />
-            </div>
-            <span className="font-display text-xl font-bold">XobaMetrics</span>
-          </div>
+        <div className="relative hidden flex-col justify-between bg-gradient-to-br from-[#0B1120] via-[#111a33] to-[#1e1b4b] p-10 text-white lg:flex">
+          <Logo className="mb-10 h-24 w-auto self-start text-white" />
           <div>
             <h1 className="font-display text-4xl font-extrabold leading-tight">Your numbers.<br />Your story.<br />Fairly compared.</h1>
             <p className="mt-4 max-w-sm text-sm text-white/80">
@@ -83,15 +79,12 @@ export default function Login() {
               ))}
             </div>
           </div>
-          <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold">Private Beta</span>
+          <span className="mt-10 inline-flex w-fit items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold">Private Beta</span>
         </div>
 
         {/* Right form */}
         <div className="p-8 sm:p-10">
-          <div className="mb-6 flex items-center gap-2 lg:hidden">
-            <Activity className="h-6 w-6 text-primary" />
-            <span className="font-display text-lg font-bold">XobaMetrics</span>
-          </div>
+          <Logo className="mb-6 h-16 w-auto text-foreground lg:hidden" />
           <h2 className="font-display text-2xl font-bold">{mode === "login" ? "Welcome back" : "Create your account"}</h2>
           <p className="mt-1 text-sm text-muted-foreground">{mode === "login" ? "Sign in to your creator dashboard." : "Join the private beta and start tracking."}</p>
 

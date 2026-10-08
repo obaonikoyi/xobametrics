@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Activity } from "lucide-react";
+import Logo from "@/components/Logo";
 import { CONTACT_EMAIL, POLICY_UPDATED } from "@/lib/site";
 
 // Public pages: platform reviewers (Google, TikTok, Meta) open these without
@@ -16,8 +16,8 @@ function Page({ title, children }) {
     <div className="min-h-screen bg-background">
       <header className="border-b border-border">
         <div className="mx-auto flex max-w-3xl items-center justify-between px-4 py-4">
-          <Link to="/" className="flex items-center gap-2 font-display font-bold">
-            <Activity className="h-5 w-5 text-primary" aria-hidden="true" /> XobaMetrics
+          <Link to="/" aria-label="XobaMetrics home">
+            <Logo className="h-12 w-auto text-foreground" />
           </Link>
           <nav className="flex gap-4 text-sm text-muted-foreground">
             <Link to="/privacy" className="hover:text-foreground">Privacy</Link>
